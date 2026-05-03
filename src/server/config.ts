@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import type { FastifyServerOptions } from 'fastify';
 import { normalizePayloadRulesConfig } from './services/payloadRules.js';
+import { createDefaultConsoleSidebarVisibility } from '../shared/consoleSidebarVisibility.js';
 
 const DEFAULT_REQUEST_BODY_LIMIT = 20 * 1024 * 1024;
 const DEFAULT_CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
@@ -154,6 +155,7 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     proxyEmptyContentFailEnabled: parseBoolean(env.PROXY_EMPTY_CONTENT_FAIL, false),
     globalBlockedBrands: [] as string[],
     globalAllowedModels: [] as string[],
+    consoleSidebarVisibility: createDefaultConsoleSidebarVisibility(),
     codexResponsesWebsocketBeta: parseOptionalSecret(env.CODEX_RESPONSES_WEBSOCKET_BETA) || 'responses_websockets=2026-02-06',
     codexHeaderDefaults: {
       userAgent: parseOptionalSecret(env.CODEX_HEADER_DEFAULTS_USER_AGENT),

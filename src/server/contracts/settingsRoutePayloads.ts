@@ -5,6 +5,7 @@ const migrationDialectSchema = z.enum(['sqlite', 'mysql', 'postgres']);
 
 const runtimeSettingsPayloadSchema = z.object({
   modelAvailabilityProbeEnabled: z.boolean().optional(),
+  consoleSidebarVisibility: z.record(z.string(), z.boolean()).optional(),
   webhookEnabled: z.boolean().optional(),
   barkEnabled: z.boolean().optional(),
   serverChanEnabled: z.boolean().optional(),
@@ -89,6 +90,9 @@ function formatSettingsPayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'modelAvailabilityProbeEnabled') {
     return '批量测活开关格式无效：需要 boolean';
+  }
+  if (firstPath === 'consoleSidebarVisibility') {
+    return '控制台侧边栏可见性格式无效：需要 boolean 映射对象';
   }
   if (firstPath === 'barkEnabled') {
     return 'Bark 开关格式无效：需要 boolean';

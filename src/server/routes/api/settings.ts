@@ -39,6 +39,7 @@ import { extractClientIp, findInvalidIpAllowlistEntries, isIpAllowed } from '../
 import { invalidateSiteProxyCache, normalizeSiteProxyUrl, withExplicitProxyRequestInit } from '../../services/siteProxy.js';
 import { performFactoryReset } from '../../services/factoryResetService.js';
 import { normalizeLogCleanupRetentionDays } from '../../shared/logCleanupRetentionDays.js';
+import { normalizeConsoleSidebarVisibilityMap } from '../../../shared/consoleSidebarVisibility.js';
 import { stopProxyLogRetentionService } from '../../services/proxyLogRetentionService.js';
 import {
   startModelAvailabilityProbeScheduler,
@@ -105,6 +106,7 @@ interface RuntimeSettingsBody {
   proxyEmptyContentFailEnabled?: boolean;
   globalBlockedBrands?: string[];
   globalAllowedModels?: string[];
+  consoleSidebarVisibility?: Record<string, boolean>;
 }
 
 interface DatabaseMigrationBody {
@@ -767,6 +769,7 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     proxyTokenMasked: maskSecret(config.proxyToken),
     globalBlockedBrands: config.globalBlockedBrands,
     globalAllowedModels: config.globalAllowedModels,
+    consoleSidebarVisibility: config.consoleSidebarVisibility,
   };
 }
 
@@ -1461,6 +1464,18 @@ export async function settingsRoutes(app: FastifyInstance) {
           async () => routeRefreshWorkflow.refreshModelsAndRebuildRoutes(),
         );
       }
+    }
+
+    if (body.consoleSidebarVisibility !== undefined) {
+      if (!body.consoleSidebarVisibility || typeof body.consoleSidebarVisibility !== 'object' || Array.isArray(body.consoleSidebarVisibility)) {
+        return reply.code(400).send({ success: false, message: '控制台侧边栏可见性格式无效：需要 boolean 映射对象' });
+      }
+      const nextVisibility = normalizeConsoleSidebarVisibilityMap(body.consoleSidebarVisibility);
+      if (JSON.stringify(nextVisibility) !== JSON.stringify(config.consoleSidebarVisibility)) {
+        changedLabels.push('控制台侧边栏可见性');
+      }
+      config.consoleSidebarVisibility = nextVisibility;
+      await upsertSetting('console_sidebar_visibility', nextVisibility);
     }
 
     if (body.webhookUrl !== undefined) {

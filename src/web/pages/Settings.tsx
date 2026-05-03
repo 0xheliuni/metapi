@@ -30,6 +30,13 @@ import { clearAppInstallationState } from '../appLocalState.js';
 import { TOPBAR_MENU_VISIBLE_STORAGE_KEY } from '../appLocalState.js';
 import { tr } from '../i18n.js';
 import { generateDownstreamSkKey } from './helpers/generateDownstreamSkKey.js';
+import {
+  CONSOLE_SIDEBAR_VISIBILITY_CHANGED_EVENT,
+  consoleSidebarItems,
+  countHiddenConsoleSidebarItems,
+  normalizeConsoleSidebarVisibility,
+  type ConsoleSidebarVisibility,
+} from '../sidebarConfig.js';
 
 const PROXY_TOKEN_PREFIX = 'sk-';
 const FACTORY_RESET_ADMIN_TOKEN = 'change-me-admin-token';
@@ -87,6 +94,7 @@ type RuntimeSettings = {
   currentAdminIp?: string;
   globalBlockedBrands?: string[];
   globalAllowedModels?: string[];
+  consoleSidebarVisibility: ConsoleSidebarVisibility;
 };
 
 type SystemProxyTestState =
@@ -372,6 +380,7 @@ export default function Settings() {
     systemProxyUrl: '',
     proxyErrorKeywords: [],
     proxyEmptyContentFailEnabled: false,
+    consoleSidebarVisibility: normalizeConsoleSidebarVisibility(undefined),
   });
   const [proxyTokenSuffix, setProxyTokenSuffix] = useState('');
   const [proxyErrorKeywordsText, setProxyErrorKeywordsText] = useState('');
@@ -401,6 +410,7 @@ export default function Settings() {
   const [allowedModelsInput, setAllowedModelsInput] = useState('');
   const [savingAllowedModels, setSavingAllowedModels] = useState(false);
   const [savingSecurity, setSavingSecurity] = useState(false);
+  const [savingConsoleSidebarVisibility, setSavingConsoleSidebarVisibility] = useState(false);
   const [adminIpAllowlistText, setAdminIpAllowlistText] = useState('');
   const [clearingCache, setClearingCache] = useState(false);
   const [clearingUsage, setClearingUsage] = useState(false);
@@ -635,6 +645,7 @@ export default function Settings() {
     : savedModelAvailabilityProbeEnabled
       ? '已启用'
       : '已关闭';
+  const hiddenConsoleSidebarItemCount = countHiddenConsoleSidebarItems(runtime.consoleSidebarVisibility);
 
   const syncPayloadRuleDraftsFromObject = (value: unknown) => {
     setPayloadRuleDrafts(normalizePayloadRulesForEditor(value));
@@ -717,6 +728,7 @@ export default function Settings() {
         currentAdminIp: typeof runtimeInfo.currentAdminIp === 'string' ? runtimeInfo.currentAdminIp : '',
         globalBlockedBrands: Array.isArray(runtimeInfo.globalBlockedBrands) ? runtimeInfo.globalBlockedBrands : [],
         globalAllowedModels: Array.isArray(runtimeInfo.globalAllowedModels) ? runtimeInfo.globalAllowedModels : [],
+        consoleSidebarVisibility: normalizeConsoleSidebarVisibility(runtimeInfo.consoleSidebarVisibility),
       });
       setSavedModelAvailabilityProbeEnabled(!!runtimeInfo.modelAvailabilityProbeEnabled);
       setBlockedBrands(Array.isArray(runtimeInfo.globalBlockedBrands) ? runtimeInfo.globalBlockedBrands : []);
@@ -934,6 +946,26 @@ export default function Settings() {
     localStorage.setItem(TOPBAR_MENU_VISIBLE_STORAGE_KEY, nextValue ? '1' : '0');
     window.dispatchEvent(new Event('metapi:topbar-menu-visible-changed'));
     toast.success(nextValue ? '已显示顶部菜单' : '已隐藏顶部菜单');
+  };
+
+  const saveConsoleSidebarVisibility = async () => {
+    setSavingConsoleSidebarVisibility(true);
+    try {
+      const res = await api.updateRuntimeSettings({
+        consoleSidebarVisibility: runtime.consoleSidebarVisibility,
+      });
+      const nextVisibility = normalizeConsoleSidebarVisibility(res?.consoleSidebarVisibility);
+      setRuntime((prev) => ({
+        ...prev,
+        consoleSidebarVisibility: nextVisibility,
+      }));
+      window.dispatchEvent(new Event(CONSOLE_SIDEBAR_VISIBILITY_CHANGED_EVENT));
+      toast.success('控制台侧边栏可见性已保存');
+    } catch (err: any) {
+      toast.error(err?.message || '保存失败');
+    } finally {
+      setSavingConsoleSidebarVisibility(false);
+    }
   };
 
   const testSystemProxy = async () => {
@@ -1902,6 +1934,9 @@ export default function Settings() {
               <span style={getSettingsPillStyle(topbarMenuVisible ? 'primary' : 'neutral')}>
                 {topbarMenuVisible ? '顶部菜单已显示' : '顶部菜单已隐藏'}
               </span>
+              <span style={getSettingsPillStyle(hiddenConsoleSidebarItemCount > 0 ? 'warning' : 'primary')}>
+                {hiddenConsoleSidebarItemCount > 0 ? `已隐藏 ${hiddenConsoleSidebarItemCount} 个控制台菜单` : '控制台菜单全部显示'}
+              </span>
             </div>
           </div>
           <label style={settingsModernToggleStyle}>
@@ -1921,6 +1956,42 @@ export default function Settings() {
               {topbarMenuVisible ? '已开启' : '已关闭'}
             </button>
           </label>
+          <div style={settingsModernFieldCardStyle}>
+            <div style={settingsModernFieldLabelStyle}>控制台侧边栏菜单项</div>
+            <div style={settingsModernFieldHintStyle}>
+              这里控制左侧“控制台”分组每个菜单项是否显示。设置会保存到数据库，刷新页面或重启服务后仍然生效；仅隐藏菜单入口，不限制直接访问对应路由。
+            </div>
+            <div style={{ display: 'grid', gap: 10 }}>
+              {consoleSidebarItems.map((item) => (
+                <label key={item.id} style={settingsModernToggleStyle}>
+                  <div style={settingsModernToggleCopyStyle}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-secondary)' }}>{item.label}</span>
+                    <span style={{ fontSize: 12, lineHeight: 1.7, color: 'var(--color-text-muted)' }}>{item.to}</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={runtime.consoleSidebarVisibility[item.id] !== false}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setRuntime((prev) => ({
+                        ...prev,
+                        consoleSidebarVisibility: {
+                          ...prev.consoleSidebarVisibility,
+                          [item.id]: checked,
+                        },
+                      }));
+                    }}
+                    style={{ width: 16, height: 16, marginTop: 2, flexShrink: 0 }}
+                  />
+                </label>
+              ))}
+            </div>
+            <div style={settingsModernActionsStyle}>
+              <button onClick={saveConsoleSidebarVisibility} disabled={savingConsoleSidebarVisibility} className="btn btn-primary">
+                {savingConsoleSidebarVisibility ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存控制台菜单可见性'}
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="card animate-slide-up stagger-4" style={settingsModernDangerCardStyle} data-settings-card="model-availability-probe">

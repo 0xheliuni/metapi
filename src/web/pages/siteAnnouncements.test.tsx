@@ -3,7 +3,7 @@ import { act, create } from 'react-test-renderer';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import SiteAnnouncements from './SiteAnnouncements.js';
-import { sidebarGroups } from '../App.js';
+import { sidebarGroups } from '../sidebarConfig.js';
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {

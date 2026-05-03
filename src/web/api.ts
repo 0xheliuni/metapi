@@ -416,6 +416,7 @@ export type RuntimeSettingsPayload = {
   proxyEmptyContentFailEnabled?: boolean;
   globalBlockedBrands?: string[];
   globalAllowedModels?: string[];
+  consoleSidebarVisibility?: Record<string, boolean>;
 };
 
 export type ProxyLogStatusFilter = "all" | "success" | "failed";

@@ -6,6 +6,8 @@ type MobileCardProps = {
   actions?: React.ReactNode;
   headerActions?: React.ReactNode;
   footerActions?: React.ReactNode;
+  selected?: boolean;
+  onSelect?: () => void;
   compact?: boolean;
   className?: string;
   bodyClassName?: string;
@@ -24,16 +26,30 @@ export function MobileCard({
   actions,
   headerActions,
   footerActions,
+  selected = false,
+  onSelect,
   compact = false,
   className = '',
   bodyClassName = '',
   children,
 }: MobileCardProps) {
   const resolvedHeaderActions = headerActions ?? actions;
-  const cardClassName = ['mobile-card', compact ? 'is-compact' : '', className].filter(Boolean).join(' ');
+  const cardClassName = ['mobile-card', compact ? 'is-compact' : '', selected ? 'is-selected' : '', onSelect ? 'is-selectable' : '', className].filter(Boolean).join(' ');
   const cardBodyClassName = ['mobile-card-body', bodyClassName].filter(Boolean).join(' ');
   return (
-    <div className={cardClassName}>
+    <div
+      className={cardClassName}
+      onClick={onSelect}
+      role={onSelect ? 'button' : undefined}
+      tabIndex={onSelect ? 0 : undefined}
+      onKeyDown={onSelect ? (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onSelect();
+        }
+      } : undefined}
+      aria-pressed={onSelect ? selected : undefined}
+    >
       <div className="mobile-card-header">
         <div className="mobile-card-title-block">
           <div className="mobile-card-title">{title}</div>

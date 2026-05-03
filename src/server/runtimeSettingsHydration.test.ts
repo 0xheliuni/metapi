@@ -17,6 +17,19 @@ describe('applyRuntimeSettings', () => {
     config.barkEnabled = true;
     config.serverChanEnabled = true;
     config.globalAllowedModels = [];
+    config.consoleSidebarVisibility = {
+      dashboard: true,
+      sites: true,
+      siteAnnouncements: true,
+      accounts: true,
+      oauth: true,
+      downstreamKeys: true,
+      downstreamSites: true,
+      reconciliation: true,
+      routes: true,
+      logs: true,
+      monitor: true,
+    };
 
     applyRuntimeSettings(new Map([
       ['disable_cross_protocol_fallback', JSON.stringify(true)],
@@ -25,6 +38,7 @@ describe('applyRuntimeSettings', () => {
       ['bark_enabled', JSON.stringify(false)],
       ['serverchan_enabled', JSON.stringify(false)],
       ['global_allowed_models', JSON.stringify(['gpt-5.4', ' claude-3.7-sonnet '])],
+      ['console_sidebar_visibility', JSON.stringify({ dashboard: true, logs: false, monitor: false })],
     ]));
 
     expect(config.disableCrossProtocolFallback).toBe(true);
@@ -33,6 +47,19 @@ describe('applyRuntimeSettings', () => {
     expect(config.barkEnabled).toBe(false);
     expect(config.serverChanEnabled).toBe(false);
     expect(config.globalAllowedModels).toEqual(['gpt-5.4', 'claude-3.7-sonnet']);
+    expect(config.consoleSidebarVisibility).toEqual({
+      dashboard: true,
+      sites: true,
+      siteAnnouncements: true,
+      accounts: true,
+      oauth: true,
+      downstreamKeys: true,
+      downstreamSites: true,
+      reconciliation: true,
+      routes: true,
+      logs: false,
+      monitor: false,
+    });
   });
 
   it('normalizes smtpPort to a positive integer during hydration', () => {

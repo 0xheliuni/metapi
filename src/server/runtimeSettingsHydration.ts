@@ -2,6 +2,7 @@ import {
   config,
   normalizeTokenRouterFailureCooldownMaxSec,
 } from './config.js';
+import { normalizeConsoleSidebarVisibilityMap } from '../shared/consoleSidebarVisibility.js';
 import { normalizePayloadRulesConfig } from './services/payloadRules.js';
 import { normalizeLogCleanupRetentionDays } from './shared/logCleanupRetentionDays.js';
 
@@ -78,6 +79,11 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
   const globalAllowedModels = parseSettingFromMap<string[] | string>(settingsMap, 'global_allowed_models');
   if (globalAllowedModels !== undefined) {
     config.globalAllowedModels = toStringList(globalAllowedModels);
+  }
+
+  const consoleSidebarVisibility = parseSettingFromMap<Record<string, boolean>>(settingsMap, 'console_sidebar_visibility');
+  if (consoleSidebarVisibility && typeof consoleSidebarVisibility === 'object' && !Array.isArray(consoleSidebarVisibility)) {
+    config.consoleSidebarVisibility = normalizeConsoleSidebarVisibilityMap(consoleSidebarVisibility);
   }
 
   const codexHeaderDefaults = parseSettingFromMap<unknown>(settingsMap, 'codex_header_defaults');

@@ -3,6 +3,7 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'rea
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import Settings from './Settings.js';
+import { createStorageMock } from '../testLocalStorage.js';
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -45,6 +46,11 @@ async function flushMicrotasks() {
 describe('Settings proxy transport', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: createStorageMock(),
+      configurable: true,
+      writable: true,
+    });
     apiMock.getAuthInfo.mockResolvedValue({ masked: 'sk-****' });
     apiMock.getRuntimeSettings.mockResolvedValue({
       checkinCron: '0 8 * * *',
@@ -63,6 +69,12 @@ describe('Settings proxy transport', () => {
       routingWeights: {},
       adminIpAllowlist: [],
       systemProxyUrl: '',
+      consoleSidebarVisibility: {
+        dashboard: true,
+        sites: true,
+        logs: false,
+        monitor: true,
+      },
     });
     apiMock.getDownstreamApiKeys.mockResolvedValue({ items: [] });
     apiMock.getRoutesLite.mockResolvedValue([]);
@@ -78,12 +90,19 @@ describe('Settings proxy transport', () => {
       responsesCompactFallbackToResponsesEnabled: true,
       proxySessionChannelConcurrencyLimit: 6,
       proxySessionChannelQueueWaitMs: 4200,
+      consoleSidebarVisibility: {
+        dashboard: true,
+        sites: false,
+        logs: false,
+        monitor: true,
+      },
     });
     apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+    delete (globalThis as typeof globalThis & { localStorage?: Storage }).localStorage;
   });
 
   it('saves codex upstream websocket and session lease settings from the settings page', async () => {
@@ -157,6 +176,69 @@ describe('Settings proxy transport', () => {
         responsesCompactFallbackToResponsesEnabled: true,
         proxySessionChannelConcurrencyLimit: 6,
         proxySessionChannelQueueWaitMs: 4200,
+      });
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('saves per-item console sidebar visibility from the settings page', async () => {
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <Settings />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const displayPreferencesCard = root.root.find((node) => (
+        node.type === 'div'
+        && node.props['data-settings-card'] === 'display-preferences'
+      ));
+      expect(collectText(displayPreferencesCard)).toContain('已隐藏 1 个控制台菜单');
+
+      const sitesToggleLabel = displayPreferencesCard.find((node) => (
+        node.type === 'label'
+        && collectText(node).includes('站点管理')
+        && collectText(node).includes('/sites')
+      ));
+      const sitesToggle = sitesToggleLabel.findByType('input');
+      expect(sitesToggle.props.checked).toBe(true);
+
+      await act(async () => {
+        sitesToggle.props.onChange({ target: { checked: false } });
+      });
+
+      const saveButton = displayPreferencesCard.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '保存控制台菜单可见性'
+      ));
+
+      await act(async () => {
+        saveButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith({
+        consoleSidebarVisibility: {
+          dashboard: true,
+          sites: false,
+          siteAnnouncements: true,
+          accounts: true,
+          oauth: true,
+          downstreamKeys: true,
+          downstreamSites: true,
+          reconciliation: true,
+          routes: true,
+          logs: false,
+          monitor: true,
+        },
       });
     } finally {
       root?.unmount();

@@ -81,6 +81,19 @@ describe('settings and auth events', () => {
     (config as any).telegramChatId = '';
     (config as any).telegramUseSystemProxy = false;
     (config as any).telegramMessageThreadId = '';
+    (config as any).consoleSidebarVisibility = {
+      dashboard: true,
+      sites: true,
+      siteAnnouncements: true,
+      accounts: true,
+      oauth: true,
+      downstreamKeys: true,
+      downstreamSites: true,
+      reconciliation: true,
+      routes: true,
+      logs: true,
+      monitor: true,
+    };
   });
 
   afterAll(async () => {
@@ -292,6 +305,7 @@ describe('settings and auth events', () => {
     const events = await db.select().from(schema.events).all();
     expect(events.some((event) => (event.message || '').includes('Payload 规则'))).toBe(true);
   });
+
 
   it('rejects invalid payload raw rules with a clear message', async () => {
     const response = await app.inject({
