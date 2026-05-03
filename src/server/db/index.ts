@@ -41,6 +41,12 @@ const TABLES_WITH_NUMERIC_ID = new Set([
   'proxy_video_tasks',
   'proxy_files',
   'downstream_api_keys',
+  'downstream_sites',
+  'downstream_site_channels',
+  'reconciliation_runs',
+  'reconciliation_facts',
+  'reconciliation_results',
+  'reconciliation_model_mappings',
   'site_announcements',
   'events',
 ]);

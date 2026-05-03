@@ -169,6 +169,20 @@
       "when": 1775731596826,
       "tag": "0024_projection_leases",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1777820400000,
+      "tag": "0025_downstream_sites",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1777844304932,
+      "tag": "0026_reconciliation_mvp",
+      "breakpoints": true
     }
   ]
 }

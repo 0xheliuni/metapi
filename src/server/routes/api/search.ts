@@ -39,11 +39,11 @@ export async function searchRoutes(app: FastifyInstance) {
   app.post<{ Body: { query: string; limit?: number } }>('/api/search', async (request) => {
     const { query, limit = 20 } = request.body;
     if (!query || query.trim().length === 0) {
-      return { accounts: [], accountTokens: [], sites: [], checkinLogs: [], proxyLogs: [], models: [] };
+      return { accounts: [], accountTokens: [], sites: [], proxyLogs: [], models: [] };
     }
 
     const q = `%${query.trim()}%`;
-    const perCategory = Math.min(Math.ceil(limit / 6), 10);
+    const perCategory = Math.min(Math.ceil(limit / 5), 10);
 
     // Search sites
     const sites = await db.select().from(schema.sites)
@@ -105,14 +105,6 @@ export async function searchRoutes(app: FastifyInstance) {
       },
       site: r.sites,
     }));
-
-    // Search checkin logs (by message)
-    const checkinLogs = (await db.select().from(schema.checkinLogs)
-      .innerJoin(schema.accounts, eq(schema.checkinLogs.accountId, schema.accounts.id))
-      .where(like(schema.checkinLogs.message, q))
-      .orderBy(desc(schema.checkinLogs.createdAt))
-      .limit(perCategory).all())
-      .map(r => ({ ...r.checkin_logs, account: r.accounts }));
 
     // Search proxy logs (by model name)
     const proxyLogs = await db.select(proxyLogBaseFields).from(schema.proxyLogs)
@@ -198,6 +190,6 @@ export async function searchRoutes(app: FastifyInstance) {
       })
       .slice(0, perCategory);
 
-    return { accounts, accountTokens, sites: uniqueSites, checkinLogs, proxyLogs, models };
+    return { accounts, accountTokens, sites: uniqueSites, proxyLogs, models };
   });
 }

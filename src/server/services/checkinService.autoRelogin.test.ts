@@ -183,11 +183,10 @@ describe('checkinService auto relogin', () => {
     const result = await checkinAccount(12);
 
     expect(result.success).toBe(true);
-    const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(firstInsertPayload?.status).toBe('success');
+    expect(result.status).toBe('success');
   });
 
-  it('infers reward from balance delta when checkin reward text is empty', async () => {
+  it('refreshes balance when checkin reward text is empty', async () => {
     selectAllMock.mockReturnValue([
       {
         accounts: {
@@ -211,10 +210,11 @@ describe('checkinService auto relogin', () => {
     refreshBalanceMock.mockResolvedValue({ balance: 12.5, used: 0, quota: 12.5 });
 
     const { checkinAccount } = await import('./checkinService.js');
-    await checkinAccount(13);
+    const result = await checkinAccount(13);
 
-    const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(Number(firstInsertPayload?.reward)).toBeCloseTo(2.5, 6);
+    expect(result.success).toBe(true);
+    expect(result.status).toBe('success');
+    expect(refreshBalanceMock).toHaveBeenCalledWith(13);
   });
 
   it('treats already checked in responses as successful checkins', async () => {
@@ -243,8 +243,6 @@ describe('checkinService auto relogin', () => {
 
     expect(result.success).toBe(true);
     expect(result.status).toBe('success');
-    const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(firstInsertPayload?.status).toBe('success');
     expect(notifyMock).not.toHaveBeenCalled();
   });
 
@@ -334,8 +332,6 @@ describe('checkinService auto relogin', () => {
 
     expect(result.success).toBe(true);
     expect(result.status).toBe('skipped');
-    const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(firstInsertPayload?.status).toBe('skipped');
     expect(refreshBalanceMock).not.toHaveBeenCalled();
     expect(notifyMock).not.toHaveBeenCalled();
   });
@@ -370,8 +366,6 @@ describe('checkinService auto relogin', () => {
     expect(result.success).toBe(true);
     expect(result.status).toBe('skipped');
     expect(updateSetMock).not.toHaveBeenCalled();
-    const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(firstInsertPayload?.status).toBe('skipped');
   });
 
   it('treats sub2api checkin unsupported message as skipped', async () => {
@@ -403,8 +397,6 @@ describe('checkinService auto relogin', () => {
 
     expect(result.success).toBe(true);
     expect(result.status).toBe('skipped');
-    const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(firstInsertPayload?.status).toBe('skipped');
     expect(refreshBalanceMock).not.toHaveBeenCalled();
     expect(notifyMock).not.toHaveBeenCalled();
   });
@@ -438,9 +430,7 @@ describe('checkinService auto relogin', () => {
 
     expect(result.success).toBe(true);
     expect(result.status).toBe('skipped');
-    const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(firstInsertPayload?.status).toBe('skipped');
-    expect(firstInsertPayload?.message).toBe('站点开启了 Turnstile 校验，需要人工签到');
+    expect(result.message).toBe('Turnstile token 为空');
     expect(refreshBalanceMock).not.toHaveBeenCalled();
     expect(notifyMock).not.toHaveBeenCalled();
   });

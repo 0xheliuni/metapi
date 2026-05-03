@@ -1,12 +1,9 @@
 import { FastifyInstance } from 'fastify';
 import { config } from '../../config.js';
-import { db, schema } from '../../db/index.js';
 import { upsertSetting } from '../../db/upsertSetting.js';
-import { eq, desc } from 'drizzle-orm';
 import { checkinAccount, checkinAll } from '../../services/checkinService.js';
 import { updateCheckinSchedule } from '../../services/checkinScheduler.js';
 import { startBackgroundTask, summarizeCheckinResults } from '../../services/backgroundTaskService.js';
-import { classifyFailureReason } from '../../services/failureReasonService.js';
 
 function buildCheckinAccountLabel(item: any): string {
   const username = item?.username || (item?.accountId ? `#${item.accountId}` : 'unknown');
@@ -101,8 +98,8 @@ export async function checkinRoutes(app: FastifyInstance) {
       jobId: task.id,
       status: task.status,
       message: reused
-        ? '签到任务执行中，请稍后查看签到日志'
-        : '已开始全部签到，请稍后查看签到日志',
+        ? '签到任务执行中，请稍后查看任务结果'
+        : '已开始全部签到，请稍后查看任务结果',
     });
   });
 
@@ -111,35 +108,6 @@ export async function checkinRoutes(app: FastifyInstance) {
     const id = parseInt(request.params.id, 10);
     const result = await checkinAccount(id, { scheduleMode: config.checkinScheduleMode });
     return result;
-  });
-
-  // Get check-in logs
-  app.get<{ Querystring: { limit?: string; offset?: string; accountId?: string } }>('/api/checkin/logs', async (request) => {
-    const limit = parseInt(request.query.limit || '50', 10);
-    const offset = parseInt(request.query.offset || '0', 10);
-    let query = db.select().from(schema.checkinLogs)
-      .innerJoin(schema.accounts, eq(schema.checkinLogs.accountId, schema.accounts.id))
-      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-      .orderBy(desc(schema.checkinLogs.createdAt))
-      .limit(limit)
-      .offset(offset);
-
-    if (request.query.accountId) {
-      query = query.where(eq(schema.checkinLogs.accountId, parseInt(request.query.accountId, 10))) as any;
-    }
-
-    const rows = await query.all();
-    return rows.map((row: any) => {
-      const source = row?.checkin_logs || row;
-      const failureReason = classifyFailureReason({
-        message: source?.message,
-        status: source?.status,
-      });
-      return {
-        ...row,
-        failureReason,
-      };
-    });
   });
 
   // Update check-in schedule

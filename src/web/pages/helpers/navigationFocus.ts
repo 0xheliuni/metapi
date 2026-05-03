@@ -108,7 +108,7 @@ export function buildEventNavigationPath(event: {
     return '/logs';
   }
   if (eventType === 'checkin') {
-    return '/checkin';
+    return '/accounts';
   }
   if (eventType === 'site_notice') {
     return '/site-announcements';

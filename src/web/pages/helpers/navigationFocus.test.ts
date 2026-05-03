@@ -83,7 +83,7 @@ describe('navigationFocus helpers', () => {
     })).toBe('/settings');
 
     expect(buildEventNavigationPath({ type: 'proxy' })).toBe('/logs');
-    expect(buildEventNavigationPath({ type: 'checkin' })).toBe('/checkin');
+    expect(buildEventNavigationPath({ type: 'checkin' })).toBe('/accounts');
     expect(buildEventNavigationPath({ type: 'site_notice' })).toBe('/site-announcements');
     expect(buildEventNavigationPath({})).toBe('/events');
   });

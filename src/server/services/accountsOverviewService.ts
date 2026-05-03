@@ -9,13 +9,11 @@ import {
   buildRuntimeHealthForAccount,
   type RuntimeHealthInfo,
 } from "./accountHealthService.js";
-import { parseCheckinRewardAmount } from "./checkinRewardParser.js";
 import { getLocalDayRangeUtc } from "./localTimeService.js";
 import {
   readSnapshotCache,
   type SnapshotEnvelope,
 } from "./snapshotCacheService.js";
-import { estimateRewardWithTodayIncomeFallback } from "./todayIncomeRewardService.js";
 import { createAdminSnapshotPersistence } from "./adminSnapshotStore.js";
 
 export type AccountCapabilities = {
@@ -109,9 +107,9 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
     db.select().from(schema.sites).all(),
   ]);
 
-  const { localDay, startUtc, endUtc } = getLocalDayRangeUtc();
+  const { startUtc, endUtc } = getLocalDayRangeUtc();
 
-  const [todaySpendRows, modelCountRows, todayCheckins] = await Promise.all([
+  const [todaySpendRows, modelCountRows] = await Promise.all([
     db
       .select({
         accountId: schema.proxyLogs.accountId,
@@ -135,21 +133,6 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
       .where(eq(schema.modelAvailability.available, true))
       .groupBy(schema.modelAvailability.accountId)
       .all(),
-    db
-      .select({
-        accountId: schema.checkinLogs.accountId,
-        reward: schema.checkinLogs.reward,
-        message: schema.checkinLogs.message,
-      })
-      .from(schema.checkinLogs)
-      .where(
-        and(
-          gte(schema.checkinLogs.createdAt, startUtc),
-          lt(schema.checkinLogs.createdAt, endUtc),
-          eq(schema.checkinLogs.status, "success"),
-        ),
-      )
-      .all(),
   ]);
 
   const spendByAccount: Record<number, number> = {};
@@ -163,23 +146,6 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
     if (row.accountId == null) continue;
     modelCountByAccount[row.accountId] = Number(row.modelCount || 0);
   }
-
-  const rewardByAccount: Record<number, number> = {};
-  const successCountByAccount: Record<number, number> = {};
-  const parsedRewardCountByAccount: Record<number, number> = {};
-  for (const log of todayCheckins) {
-    successCountByAccount[log.accountId] =
-      (successCountByAccount[log.accountId] || 0) + 1;
-    const rewardNum =
-      parseCheckinRewardAmount(log.reward) ||
-      parseCheckinRewardAmount(log.message);
-    if (rewardNum <= 0) continue;
-    rewardByAccount[log.accountId] =
-      (rewardByAccount[log.accountId] || 0) + rewardNum;
-    parsedRewardCountByAccount[log.accountId] =
-      (parsedRewardCountByAccount[log.accountId] || 0) + 1;
-  }
-
   return {
     accounts: rows.map((row) => {
       const credentialMode = resolveStoredCredentialMode(row.accounts);
@@ -192,17 +158,7 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
         todaySpend:
           Math.round((spendByAccount[row.accounts.id] || 0) * 1_000_000) /
           1_000_000,
-        todayReward:
-          Math.round(
-            estimateRewardWithTodayIncomeFallback({
-              day: localDay,
-              successCount: successCountByAccount[row.accounts.id] || 0,
-              parsedRewardCount:
-                parsedRewardCountByAccount[row.accounts.id] || 0,
-              rewardSum: rewardByAccount[row.accounts.id] || 0,
-              extraConfig: row.accounts.extraConfig,
-            }) * 1_000_000,
-          ) / 1_000_000,
+        todayReward: 0,
         runtimeHealth: buildRuntimeHealthForAccount({
           accountStatus: row.accounts.status,
           siteStatus: row.sites.status,

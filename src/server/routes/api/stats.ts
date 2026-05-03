@@ -20,8 +20,6 @@ import {
   startBackgroundTask,
   waitForBackgroundTaskCompletion,
 } from "../../services/backgroundTaskService.js";
-import { parseCheckinRewardAmount } from "../../services/checkinRewardParser.js";
-import { estimateRewardWithTodayIncomeFallback } from "../../services/todayIncomeRewardService.js";
 import {
   getProxyLogBaseSelectFields,
   parseProxyLogBillingDetails,

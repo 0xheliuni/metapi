@@ -1,7 +1,6 @@
 import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { buildModelAnalysisFromDailyUsage } from "./modelAnalysisService.js";
-import { parseCheckinRewardAmount } from "./checkinRewardParser.js";
 import {
   formatUtcSqlDateTime,
   getLocalDayRangeUtc,
@@ -19,7 +18,6 @@ import {
   type SiteAvailabilitySiteRow,
   toRoundedMicroNumber,
 } from "./statsShared.js";
-import { estimateRewardWithTodayIncomeFallback } from "./todayIncomeRewardService.js";
 import { createAdminSnapshotPersistence } from "./adminSnapshotStore.js";
 import { runUsageAggregationProjectionPass } from "./usageAggregationService.js";
 
@@ -93,28 +91,11 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
   const lastMinuteDate = formatUtcSqlDateTime(new Date(nowTs - 60_000));
 
   const [
-    todayCheckinRows,
     totalUsedRow,
     proxy24hRow,
     proxyPerformanceRow,
     todaySpendRow,
   ] = await Promise.all([
-    db
-      .select()
-      .from(schema.checkinLogs)
-      .innerJoin(
-        schema.accounts,
-        eq(schema.checkinLogs.accountId, schema.accounts.id),
-      )
-      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-      .where(
-        and(
-          gte(schema.checkinLogs.createdAt, todayStartUtc),
-          lt(schema.checkinLogs.createdAt, todayEndUtc),
-          eq(schema.sites.status, "active"),
-        ),
-      )
-      .all(),
     db
       .select({
         totalUsed: sql<number>`coalesce(sum(coalesce(${schema.siteDayUsage.totalSiteSpend}, 0)), 0)`,
@@ -176,30 +157,6 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
       .get(),
   ]);
 
-  const todayCheckins = todayCheckinRows.map((row) => row.checkin_logs);
-  const checkinFailed = todayCheckins.filter(
-    (checkin) => checkin.status === "failed",
-  ).length;
-  const checkinSuccess = todayCheckins.length - checkinFailed;
-  const rewardByAccount: Record<number, number> = {};
-  const successCountByAccount: Record<number, number> = {};
-  const parsedRewardCountByAccount: Record<number, number> = {};
-  for (const row of todayCheckinRows) {
-    const checkin = row.checkin_logs;
-    if (checkin.status !== "success") continue;
-    const accountId = row.accounts.id;
-    successCountByAccount[accountId] =
-      (successCountByAccount[accountId] || 0) + 1;
-    const rewardValue =
-      parseCheckinRewardAmount(checkin.reward) ||
-      parseCheckinRewardAmount(checkin.message);
-    if (rewardValue <= 0) continue;
-    rewardByAccount[accountId] =
-      (rewardByAccount[accountId] || 0) + rewardValue;
-    parsedRewardCountByAccount[accountId] =
-      (parsedRewardCountByAccount[accountId] || 0) + 1;
-  }
-
   const proxySuccess = Number(proxy24hRow?.success || 0);
   const proxyFailed = Number(proxy24hRow?.failed || 0);
   const proxyTotal = Number(proxy24hRow?.total || 0);
@@ -208,30 +165,18 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
   const tokensPerMinute = Number(proxyPerformanceRow?.totalTokens || 0);
   const totalUsed = Number(totalUsedRow?.totalUsed || 0);
   const todaySpend = Number(todaySpendRow?.todaySpend || 0);
-  const todayReward = accounts.reduce(
-    (sum, account) =>
-      sum +
-      estimateRewardWithTodayIncomeFallback({
-        day: today,
-        successCount: successCountByAccount[account.id] || 0,
-        parsedRewardCount: parsedRewardCountByAccount[account.id] || 0,
-        rewardSum: rewardByAccount[account.id] || 0,
-        extraConfig: account.extraConfig,
-      }),
-    0,
-  );
 
   return {
     totalBalance,
     totalUsed: toRoundedMicroNumber(totalUsed),
     todaySpend: toRoundedMicroNumber(todaySpend),
-    todayReward: toRoundedMicroNumber(todayReward),
+    todayReward: 0,
     activeAccounts: activeCount,
     totalAccounts: accounts.length,
     todayCheckin: {
-      success: checkinSuccess,
-      failed: checkinFailed,
-      total: todayCheckins.length,
+      success: 0,
+      failed: 0,
+      total: 0,
     },
     proxy24h: {
       success: proxySuccess,

@@ -762,6 +762,92 @@ export type DownstreamApiKeyTrendResponse = {
   buckets: DownstreamApiKeyTrendBucket[];
 };
 
+export type DownstreamSiteItem = {
+  id: number;
+  name: string;
+  hostSiteId: number;
+  hostSiteName: string | null;
+  hostSiteUrl: string | null;
+  hostSitePlatform: string | null;
+  baseUrlOverride: string | null;
+  authMode: string;
+  adminCredentialMasked: string;
+  adminUserId: number | null;
+  description: string | null;
+  enabled: boolean;
+  lastSyncStatus: string | null;
+  lastSyncMessage: string | null;
+  lastSyncAt: string | null;
+  channelCount: number;
+  totalDerivedConsumedUsd: number;
+  updatedAt: string | null;
+  createdAt: string | null;
+};
+
+export type DownstreamSiteChannel = {
+  id: number;
+  downstreamSiteId: number;
+  remoteChannelId: string;
+  remoteName: string;
+  remoteType: number | null;
+  remoteGroup: string | null;
+  balance: number | null;
+  rawConsumedQuota: number | null;
+  derivedConsumedUsd: number | null;
+  requestCount: number | null;
+  rawPayload: string | null;
+  syncedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type ReconciliationRunItem = {
+  id: number;
+  sourceType: string;
+  sourceId: number | null;
+  scopeType: 'hour' | 'day';
+  windowStart: string;
+  windowEnd: string;
+  modelScope: string;
+  status: string;
+  summaryJson: string | null;
+  errorMessage: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  summary?: Record<string, unknown> | null;
+};
+
+export type ReconciliationResultItem = {
+  id: number;
+  runId: number;
+  sourceType: string;
+  sourceId: number | null;
+  hostSiteId: number | null;
+  downstreamSiteId: number | null;
+  timeBucketType: string;
+  timeBucketStart: string;
+  timeBucketEnd: string;
+  modelFamily: string;
+  modelCanonical: string | null;
+  downstreamBilledTokens: number;
+  downstreamBilledCostUsd: number;
+  metapiObservedTokens: number;
+  metapiObservedCostUsd: number;
+  upstreamConsumedQuota: number;
+  upstreamConsumedCostUsdDerived: number;
+  deltaTokens: number;
+  deltaCostUsd: number;
+  deltaRate: number | null;
+  status: string;
+  confidenceScore: number;
+  explanationCodes: string | null;
+  explanationText: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
 export const api = {
   // Sites
   getSites: () => request("/api/sites"),
@@ -777,6 +863,59 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ url }),
     }),
+  getDownstreamSites: () =>
+    request("/api/downstream-sites") as Promise<{
+      success: boolean;
+      items: DownstreamSiteItem[];
+    }>,
+  createDownstreamSite: (data: Record<string, unknown>) =>
+    request("/api/downstream-sites", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<{ success: boolean; item: DownstreamSiteItem }>,
+  updateDownstreamSite: (id: number, data: Record<string, unknown>) =>
+    request(`/api/downstream-sites/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }) as Promise<{ success: boolean; item: DownstreamSiteItem }>,
+  deleteDownstreamSite: (id: number) =>
+    request(`/api/downstream-sites/${id}`, {
+      method: "DELETE",
+    }) as Promise<{ success: boolean }>,
+  testDownstreamSiteConnection: (id: number) =>
+    request(`/api/downstream-sites/${id}/test-connection`, {
+      method: "POST",
+    }) as Promise<{ success: boolean; ok: true; channelCount: number; message: string }>,
+  syncDownstreamSite: (id: number) =>
+    request(`/api/downstream-sites/${id}/sync`, {
+      method: "POST",
+    }) as Promise<{ success: boolean; queued: boolean; reused: boolean; taskId: string }>,
+  getDownstreamSiteChannels: (id: number) =>
+    request(`/api/downstream-sites/${id}/channels`) as Promise<{
+      success: boolean;
+      item: DownstreamSiteItem;
+      channels: DownstreamSiteChannel[];
+    }>,
+  getReconciliationRuns: () =>
+    request('/api/reconciliation/runs') as Promise<{
+      success: boolean;
+      items: ReconciliationRunItem[];
+    }>,
+  createReconciliationRun: (data: {
+    scopeType: 'hour' | 'day';
+    windowStart?: string;
+    windowEnd?: string;
+  }) =>
+    request('/api/reconciliation/runs', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }) as Promise<{ success: boolean; item: ReconciliationRunItem }>,
+  getReconciliationRunResults: (id: number) =>
+    request(`/api/reconciliation/runs/${id}/results`) as Promise<{
+      success: boolean;
+      item: ReconciliationRunItem;
+      results: ReconciliationResultItem[];
+    }>,
   getSiteDisabledModels: (siteId: number) =>
     request(`/api/sites/${siteId}/disabled-models`),
   updateSiteDisabledModels: (siteId: number, models: string[]) =>
@@ -903,8 +1042,6 @@ export const api = {
   triggerCheckinAll: () => request("/api/checkin/trigger", { method: "POST" }),
   triggerCheckin: (id: number) =>
     request(`/api/checkin/trigger/${id}`, { method: "POST" }),
-  getCheckinLogs: (params?: string) =>
-    request(`/api/checkin/logs${params ? "?" + params : ""}`),
   updateCheckinSchedule: (cron: string) =>
     request("/api/checkin/schedule", {
       method: "PUT",

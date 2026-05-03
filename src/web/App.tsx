@@ -10,6 +10,7 @@ import {
   FIRST_USE_DOC_REMINDER_KEY,
   LEGACY_THEME_STORAGE_KEY,
   THEME_MODE_STORAGE_KEY,
+  TOPBAR_MENU_VISIBLE_STORAGE_KEY,
   USER_PROFILE_STORAGE_KEY,
 } from './appLocalState.js';
 import { I18nProvider, useI18n } from './i18n.js';
@@ -23,11 +24,12 @@ const Dashboard = lazy(() => import('./pages/Dashboard.js'));
 const Sites = lazy(() => import('./pages/Sites.js'));
 const Accounts = lazy(() => import('./pages/Accounts.js'));
 const Tokens = lazy(() => import('./pages/Tokens.js'));
-const CheckinLog = lazy(() => import('./pages/CheckinLog.js'));
 const TokenRoutes = lazy(() => import('./pages/TokenRoutes.js'));
 const ProxyLogs = lazy(() => import('./pages/ProxyLogs.js'));
 const Settings = lazy(() => import('./pages/Settings.js'));
 const DownstreamKeys = lazy(() => import('./pages/DownstreamKeys.js'));
+const DownstreamSites = lazy(() => import('./pages/DownstreamSites.js'));
+const Reconciliation = lazy(() => import('./pages/Reconciliation.js'));
 const ImportExport = lazy(() => import('./pages/ImportExport.js'));
 const NotificationSettings = lazy(() => import('./pages/NotificationSettings.js'));
 const ProgramLogs = lazy(() => import('./pages/ProgramLogs.js'));
@@ -126,6 +128,13 @@ function resolveStoredProfile(): UserProfile {
     const avatarSeed = createRandomAvatarSeed();
     return { name: '管理员', avatarSeed, avatarStyle: pickDicebearStyle(avatarSeed) };
   }
+}
+
+function resolveStoredTopbarMenuVisible(): boolean {
+  const saved = localStorage.getItem(TOPBAR_MENU_VISIBLE_STORAGE_KEY);
+  if (saved === '0') return false;
+  if (saved === '1') return true;
+  return true;
 }
 
 export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (text: string) => string }) {
@@ -413,7 +422,8 @@ export const sidebarGroups = [
       { to: '/accounts', label: '连接管理', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg> },
       { to: '/oauth', label: 'OAuth 管理', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a3 3 0 106 0 3 3 0 00-6 0zM3 17a3 3 0 106 0 3 3 0 00-6 0zM15 17a3 3 0 106 0 3 3 0 00-6 0zM6 14V10m0 0a3 3 0 113-3m-3 3a3 3 0 003 3h6" /></svg> },
       { to: '/downstream-keys', label: '下游密钥', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a4 4 0 11-8 0 4 4 0 018 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 21a6 6 0 0110.8-3.6M15.5 18.5l2-2m0 0l2 2m-2-2V21" /></svg> },
-      { to: '/checkin', label: '签到记录', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
+      { to: '/downstream-sites', label: '下游站点', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 7h18M5 7l1 12h12l1-12M9 11v4m6-4v4M10 3h4a1 1 0 011 1v3H9V4a1 1 0 011-1z" /></svg> },
+      { to: '/reconciliation', label: '对账中心', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M4 7h8m-8 5h16m-16 5h10m4-8l2 2 4-4" /></svg> },
       { to: '/routes', label: '路由', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg> },
       { to: '/logs', label: '使用日志', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg> },
       { to: '/monitor', label: '可用性监控', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 5a2 2 0 012-2h14a2 2 0 012 2v11a2 2 0 01-2 2h-5l-2.5 3-2.5-3H5a2 2 0 01-2-2V5z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 10h3l1.5-2.5L14 13l1.5-3H17" /></svg> },
@@ -434,6 +444,7 @@ const topNavItems = [
   { label: '控制台', to: '/' },
   { label: '模型广场', to: '/models' },
   { label: '模型操练场', to: '/playground' },
+  { label: '对账中心', to: '/reconciliation' },
   { label: '关于', to: '/about' },
 ];
 
@@ -456,6 +467,7 @@ function AppShell() {
   const [authed, setAuthed] = useState(() => hasValidAuthSession(localStorage));
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [topbarMenuVisible, setTopbarMenuVisible] = useState(resolveStoredTopbarMenuVisible);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const [showThemeMenu, setShowThemeMenu] = useState(false);
   const themeMenuRef = useRef<HTMLDivElement>(null);
@@ -635,6 +647,22 @@ function AppShell() {
     toast.success(t('个人信息已保存'));
   };
 
+  useEffect(() => {
+    localStorage.setItem(TOPBAR_MENU_VISIBLE_STORAGE_KEY, topbarMenuVisible ? '1' : '0');
+  }, [topbarMenuVisible]);
+
+  useEffect(() => {
+    const handler = () => {
+      setTopbarMenuVisible(resolveStoredTopbarMenuVisible());
+    };
+    window.addEventListener('storage', handler);
+    window.addEventListener('metapi:topbar-menu-visible-changed', handler as EventListener);
+    return () => {
+      window.removeEventListener('storage', handler);
+      window.removeEventListener('metapi:topbar-menu-visible-changed', handler as EventListener);
+    };
+  }, []);
+
   if (!authed) {
     return <Login t={t} onLogin={(token) => {
       persistAuthSession(localStorage, token);
@@ -661,13 +689,15 @@ function AppShell() {
           <img src="/logo.png" alt="Metapi" style={{ width: 28, height: 28, borderRadius: 6 }} />
           <span className="topbar-logo-text">Metapi</span>
         </div>
-        <nav className="topbar-nav">
-          {topNavItems.map((item) => (
-            <NavLink key={item.to} to={item.to} end className={({ isActive }) => `topbar-nav-item ${isActive ? 'active' : ''}`}>
-              {t(item.label)}
-            </NavLink>
-          ))}
-        </nav>
+        {topbarMenuVisible ? (
+          <nav className="topbar-nav">
+            {topNavItems.map((item) => (
+              <NavLink key={item.to} to={item.to} end className={({ isActive }) => `topbar-nav-item ${isActive ? 'active' : ''}`}>
+                {t(item.label)}
+              </NavLink>
+            ))}
+          </nav>
+        ) : <div style={{ flex: 1 }} />}
         <div className="topbar-right">
           <button
             className="topbar-icon-btn"
@@ -865,12 +895,13 @@ function AppShell() {
                 <Route path="/accounts" element={<Accounts />} />
                 <Route path="/oauth" element={<OAuthManagement />} />
                 <Route path="/tokens" element={<Tokens />} />
-                <Route path="/checkin" element={<CheckinLog />} />
                 <Route path="/routes" element={<TokenRoutes />} />
                 <Route path="/logs" element={<ProxyLogs />} />
                 <Route path="/monitor" element={<Monitors />} />
                 <Route path="/settings" element={<Settings />} />
-                <Route path="/downstream-keys" element={<DownstreamKeys />} />
+  <Route path="/downstream-keys" element={<DownstreamKeys />} />
+  <Route path="/downstream-sites" element={<DownstreamSites />} />
+                <Route path="/reconciliation" element={<Reconciliation />} />
                 <Route path="/events" element={<ProgramLogs />} />
                 <Route path="/settings/import-export" element={<ImportExport />} />
                 <Route path="/settings/notify" element={<NotificationSettings />} />

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
-import { formatDateLocal, formatDateTimeMinuteLocal } from '../pages/helpers/checkinLogTime.js';
+import { formatDateTimeMinuteLocal } from '../pages/helpers/checkinLogTime.js';
 import { buildAccountFocusPath, buildSiteFocusPath, buildTokenFocusPath } from '../pages/helpers/navigationFocus.js';
 import { useI18n } from '../i18n.js';
 import { useAnimatedVisibility } from './useAnimatedVisibility.js';
@@ -33,14 +33,6 @@ interface AccountTokenResult {
   site?: { name: string } | null;
 }
 
-interface CheckinLogResult {
-  id: number;
-  accountId: number;
-  message?: string | null;
-  createdAt?: string | null;
-  account?: { username?: string | null } | null;
-}
-
 interface ProxyLogResult {
   id: number;
   modelRequested?: string | null;
@@ -60,7 +52,6 @@ interface SearchResult {
   accounts: AccountResult[];
   accountTokens: AccountTokenResult[];
   sites: SiteResult[];
-  checkinLogs: CheckinLogResult[];
   proxyLogs: ProxyLogResult[];
   models: ModelSearchResult[];
 }
@@ -97,7 +88,6 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
         accounts: Array.isArray(res?.accounts) ? res.accounts : [],
         accountTokens: Array.isArray(res?.accountTokens) ? res.accountTokens : [],
         sites: Array.isArray(res?.sites) ? res.sites : [],
-        checkinLogs: Array.isArray(res?.checkinLogs) ? res.checkinLogs : [],
         proxyLogs: Array.isArray(res?.proxyLogs) ? res.proxyLogs : [],
       });
     } catch {
@@ -133,7 +123,6 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
     || results.accounts.length
     || results.accountTokens.length
     || results.sites.length
-    || results.checkinLogs.length
     || results.proxyLogs.length
   );
 
@@ -248,25 +237,6 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
                       {' · '}
                       {token.site?.name || t('未关联站点')}
                       {token.tokenGroup ? ` · ${token.tokenGroup}` : ''}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          ) : null}
-
-          {results?.checkinLogs.length ? (
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', padding: '8px 16px 4px', textTransform: 'uppercase' }}>{t('签到记录')}</div>
-              {results.checkinLogs.map((l) => (
-                <button key={l.id} className="search-result-item" onClick={() => goTo('/checkin')}>
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <div>
-                    <div style={{ fontWeight: 500 }}>{l.account?.username || `ID:${l.accountId}`}</div>
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                      {l.message || '-'} · {formatDateLocal(l.createdAt)}
                     </div>
                   </div>
                 </button>

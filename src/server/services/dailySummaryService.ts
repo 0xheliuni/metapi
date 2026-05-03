@@ -1,8 +1,6 @@
 import { and, eq, gte, lt } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { getLocalDayRangeUtc, formatLocalDateTime, getResolvedTimeZone } from './localTimeService.js';
-import { parseCheckinRewardAmount } from './checkinRewardParser.js';
-import { estimateRewardWithTodayIncomeFallback } from './todayIncomeRewardService.js';
 import { getProxyLogBaseSelectFields } from './proxyLogStore.js';
 
 export type DailySummaryMetrics = {
@@ -41,34 +39,6 @@ export async function collectDailySummaryMetrics(now = new Date()): Promise<Dail
   const activeAccounts = accounts.filter((account) => account.status === 'active').length;
   const lowBalanceAccounts = accounts.filter((account) => (account.balance || 0) < 1).length;
 
-  const todayCheckinRows = await db.select().from(schema.checkinLogs)
-    .innerJoin(schema.accounts, eq(schema.checkinLogs.accountId, schema.accounts.id))
-    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-    .where(and(
-      gte(schema.checkinLogs.createdAt, startUtc),
-      lt(schema.checkinLogs.createdAt, endUtc),
-      eq(schema.sites.status, 'active'),
-    ))
-    .all();
-  const todayCheckins = todayCheckinRows.map((row) => row.checkin_logs);
-  const checkinSkipped = todayCheckins.filter((checkin) => checkin.status === 'skipped').length;
-  const checkinFailed = todayCheckins.filter((checkin) => checkin.status === 'failed').length;
-  const checkinSuccess = todayCheckins.length - checkinSkipped - checkinFailed;
-
-  const rewardByAccount: Record<number, number> = {};
-  const successCountByAccount: Record<number, number> = {};
-  const parsedRewardCountByAccount: Record<number, number> = {};
-  for (const row of todayCheckinRows) {
-    const checkin = row.checkin_logs;
-    if (checkin.status !== 'success') continue;
-    const accountId = row.accounts.id;
-    successCountByAccount[accountId] = (successCountByAccount[accountId] || 0) + 1;
-    const rewardValue = parseCheckinRewardAmount(checkin.reward) || parseCheckinRewardAmount(checkin.message);
-    if (rewardValue <= 0) continue;
-    rewardByAccount[accountId] = (rewardByAccount[accountId] || 0) + rewardValue;
-    parsedRewardCountByAccount[accountId] = (parsedRewardCountByAccount[accountId] || 0) + 1;
-  }
-
   const todayProxyRows = await db.select({
     proxy_logs: proxyLogBaseFields,
     accounts: schema.accounts,
@@ -88,14 +58,6 @@ export async function collectDailySummaryMetrics(now = new Date()): Promise<Dail
   const proxyTotalTokens = todayProxyLogs.reduce((sum, log) => sum + (log.totalTokens || 0), 0);
   const todaySpend = todayProxyLogs.reduce((sum, log) => sum + (typeof log.estimatedCost === 'number' ? log.estimatedCost : 0), 0);
 
-  const todayReward = accounts.reduce((sum, account) => sum + estimateRewardWithTodayIncomeFallback({
-    day: localDay,
-    successCount: successCountByAccount[account.id] || 0,
-    parsedRewardCount: parsedRewardCountByAccount[account.id] || 0,
-    rewardSum: rewardByAccount[account.id] || 0,
-    extraConfig: account.extraConfig,
-  }), 0);
-
   return {
     localDay,
     generatedAtLocal: formatLocalDateTime(now),
@@ -103,16 +65,16 @@ export async function collectDailySummaryMetrics(now = new Date()): Promise<Dail
     totalAccounts: accounts.length,
     activeAccounts,
     lowBalanceAccounts,
-    checkinTotal: todayCheckins.length,
-    checkinSuccess: Math.max(0, checkinSuccess),
-    checkinSkipped,
-    checkinFailed,
+    checkinTotal: 0,
+    checkinSuccess: 0,
+    checkinSkipped: 0,
+    checkinFailed: 0,
     proxyTotal: todayProxyLogs.length,
     proxySuccess,
     proxyFailed,
     proxyTotalTokens,
     todaySpend: round6(todaySpend),
-    todayReward: round6(todayReward),
+    todayReward: 0,
   };
 }
 

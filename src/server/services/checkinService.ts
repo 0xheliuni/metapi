@@ -5,7 +5,6 @@ import { sendNotification } from './notifyService.js';
 import { isCloudflareChallenge, isTokenExpiredError } from './alertRules.js';
 import { reportTokenExpired } from './alertService.js';
 import { refreshBalance } from './balanceService.js';
-import { parseCheckinRewardAmount } from './checkinRewardParser.js';
 import {
   getAutoReloginConfig,
   getPlatformUserIdFromExtraConfig,
@@ -140,12 +139,6 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
       reason: '\u7ad9\u70b9\u5df2\u7981\u7528',
       source: 'checkin',
     });
-    await db.insert(schema.checkinLogs).values({
-      accountId: account.id,
-      status: 'skipped',
-      message: 'site disabled',
-      createdAt,
-    }).run();
 
     if (!options?.skipEvent) {
       await db.insert(schema.events).values({
@@ -204,8 +197,6 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
   const normalizedStatus: CheckinExecutionStatus = effectiveSuccess
     ? ((unsupportedCheckin || manualVerificationRequired) ? 'skipped' : 'success')
     : 'failed';
-  let logReward = result.reward;
-  let refreshedBalanceInfo: Awaited<ReturnType<typeof refreshBalance>> | null = null;
 
   if (effectiveSuccess) {
     const healthState = (unsupportedCheckin || manualVerificationRequired) ? 'degraded' : 'healthy';
@@ -243,27 +234,12 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
 
     if (shouldRefreshBalance) {
       try {
-        refreshedBalanceInfo = await refreshBalance(account.id);
+        await refreshBalance(account.id);
       } catch {}
-    }
-
-    const parsedReward = parseCheckinRewardAmount(logReward) || parseCheckinRewardAmount(result.message);
-    if (directCheckinSuccess && parsedReward <= 0) {
-      const inferredReward = inferRewardFromBalanceDelta(account.balance, refreshedBalanceInfo?.balance);
-      if (inferredReward > 0) {
-        logReward = inferredReward.toString();
-      }
     }
   }
 
   const createdAt = formatUtcSqlDateTime(new Date());
-  await db.insert(schema.checkinLogs).values({
-    accountId: account.id,
-    status: normalizedStatus,
-    message: logMessage,
-    reward: logReward,
-    createdAt,
-  }).run();
 
   if (!options?.skipEvent) {
     await db.insert(schema.events).values({

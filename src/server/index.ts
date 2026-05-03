@@ -20,6 +20,8 @@ import { taskRoutes } from './routes/api/tasks.js';
 import { testRoutes } from './routes/api/test.js';
 import { monitorRoutes } from './routes/api/monitor.js';
 import { downstreamApiKeysRoutes } from './routes/api/downstreamApiKeys.js';
+import { downstreamSitesRoutes } from './routes/api/downstreamSites.js';
+import { reconciliationRoutes } from './routes/api/reconciliation.js';
 import { oauthRoutes } from './routes/api/oauth.js';
 import { siteAnnouncementsRoutes } from './routes/api/siteAnnouncements.js';
 import { updateCenterRoutes } from './routes/api/updateCenter.js';
@@ -228,6 +230,8 @@ await app.register(taskRoutes);
 await app.register(testRoutes);
 await app.register(monitorRoutes);
 await app.register(downstreamApiKeysRoutes);
+await app.register(downstreamSitesRoutes);
+await app.register(reconciliationRoutes);
 await app.register(oauthRoutes);
 
 // Register OpenAI-compatible proxy routes

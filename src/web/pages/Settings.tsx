@@ -27,6 +27,7 @@ import {
 } from './helpers/routingProfiles.js';
 import { clearAuthSession } from '../authSession.js';
 import { clearAppInstallationState } from '../appLocalState.js';
+import { TOPBAR_MENU_VISIBLE_STORAGE_KEY } from '../appLocalState.js';
 import { tr } from '../i18n.js';
 import { generateDownstreamSkKey } from './helpers/generateDownstreamSkKey.js';
 
@@ -332,6 +333,13 @@ function resolveRouteCooldownInput(seconds: number | null | undefined): {
   };
 }
 
+function resolveStoredTopbarMenuVisible(): boolean {
+  const saved = localStorage.getItem(TOPBAR_MENU_VISIBLE_STORAGE_KEY);
+  if (saved === '0') return false;
+  if (saved === '1') return true;
+  return true;
+}
+
 function toRouteCooldownSeconds(value: number, unit: RouteCooldownUnit): number {
   const normalizedValue = Number.isFinite(value) && value > 0 ? Math.max(1, Math.trunc(value)) : 1;
   const unitConfig = ROUTE_COOLDOWN_UNIT_OPTIONS.find((option) => option.value === unit) || ROUTE_COOLDOWN_UNIT_OPTIONS[0];
@@ -340,6 +348,7 @@ function toRouteCooldownSeconds(value: number, unit: RouteCooldownUnit): number 
 
 export default function Settings() {
   const isMobile = useIsMobile();
+  const [topbarMenuVisible, setTopbarMenuVisible] = useState(resolveStoredTopbarMenuVisible);
   const [runtime, setRuntime] = useState<RuntimeSettings>({
     checkinCron: '0 8 * * *',
     checkinScheduleMode: 'cron',
@@ -804,7 +813,7 @@ export default function Settings() {
     setTestingCheckin(true);
     try {
       await api.triggerCheckinAll();
-      toast.success('已开始全部签到，请稍后查看签到日志');
+      toast.success('已开始全部签到，请稍后查看任务结果');
     } catch (err: any) {
       toast.error(err?.message || '触发签到失败');
     } finally {
@@ -917,6 +926,14 @@ export default function Settings() {
     } finally {
       setSavingProxyTransport(false);
     }
+  };
+
+  const handleToggleTopbarMenuVisible = () => {
+    const nextValue = !topbarMenuVisible;
+    setTopbarMenuVisible(nextValue);
+    localStorage.setItem(TOPBAR_MENU_VISIBLE_STORAGE_KEY, nextValue ? '1' : '0');
+    window.dispatchEvent(new Event('metapi:topbar-menu-visible-changed'));
+    toast.success(nextValue ? '已显示顶部菜单' : '已隐藏顶部菜单');
   };
 
   const testSystemProxy = async () => {
@@ -1871,6 +1888,39 @@ export default function Settings() {
               {savingProxyTransport ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存传输与并发'}
             </button>
           </div>
+        </div>
+
+        <div className="card animate-slide-up stagger-4" style={settingsModernCardStyle} data-settings-card="display-preferences">
+          <div style={settingsModernHeaderStyle}>
+            <div style={settingsModernTitleBlockStyle}>
+              <div style={settingsModernTitleStyle}>显示偏好</div>
+              <div style={settingsModernDescriptionStyle}>
+                控制前端界面的展示方式。此项仅影响当前浏览器本地显示，不会修改服务端运行配置。
+              </div>
+            </div>
+            <div style={settingsModernPillRowStyle}>
+              <span style={getSettingsPillStyle(topbarMenuVisible ? 'primary' : 'neutral')}>
+                {topbarMenuVisible ? '顶部菜单已显示' : '顶部菜单已隐藏'}
+              </span>
+            </div>
+          </div>
+          <label style={settingsModernToggleStyle}>
+            <div style={settingsModernToggleCopyStyle}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-secondary)' }}>展示顶部菜单功能</span>
+              <span style={{ fontSize: 12, lineHeight: 1.7, color: 'var(--color-text-muted)' }}>
+                控制顶部导航菜单是否显示。关闭后仅保留 Logo、搜索、通知、主题和头像等右侧操作区。
+              </span>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={topbarMenuVisible}
+              className={`checkin-toggle-badge ${topbarMenuVisible ? 'is-on' : 'is-off'}`}
+              onClick={handleToggleTopbarMenuVisible}
+            >
+              {topbarMenuVisible ? '已开启' : '已关闭'}
+            </button>
+          </label>
         </div>
 
         <div className="card animate-slide-up stagger-4" style={settingsModernDangerCardStyle} data-settings-card="model-availability-probe">
