@@ -37,6 +37,18 @@ export async function getReconciliationRunById(id: number) {
   return row ? toRunView(row) : null;
 }
 
+export async function deleteReconciliationRunById(id: number) {
+  const existing = await db.select({ id: schema.reconciliationRuns.id })
+    .from(schema.reconciliationRuns)
+    .where(eq(schema.reconciliationRuns.id, id))
+    .get();
+  if (!existing) return false;
+  const result = await db.delete(schema.reconciliationRuns)
+    .where(eq(schema.reconciliationRuns.id, id))
+    .run();
+  return (result.changes || 0) > 0;
+}
+
 export async function getReconciliationResultsByRunId(runId: number) {
   return db.select().from(schema.reconciliationResults)
     .where(eq(schema.reconciliationResults.runId, runId))

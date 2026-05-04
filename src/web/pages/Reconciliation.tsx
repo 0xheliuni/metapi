@@ -1,12 +1,17 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api, type ReconciliationResultItem, type ReconciliationRunItem } from '../api.js';
 import { BrandGlyph, getBrand } from '../components/BrandIcon.js';
+import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
+import { MobileCard, MobileField } from '../components/MobileCard.js';
+import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
 import { useToast } from '../components/Toast.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import { tr } from '../i18n.js';
 
 type ScopeType = 'hour' | 'day';
 type VendorGroupKey = 'openai' | 'anthropic' | 'google' | 'other';
+type RunStatusFilter = 'all' | 'running' | 'succeeded' | 'failed';
+type RunScopeFilter = 'all' | ScopeType;
 
 type VendorGroup = {
   key: VendorGroupKey;
@@ -128,6 +133,166 @@ function buildVendorMeta(key: VendorGroupKey) {
   };
 }
 
+function matchesRunSearch(run: ReconciliationRunItem, search: string): boolean {
+  const query = search.trim().toLowerCase();
+  if (!query) return true;
+  const haystack = [
+    `#${run.id}`,
+    run.status,
+    run.scopeType === 'hour' ? tr('小时窗') : tr('日窗'),
+    formatIso(run.windowStart),
+    formatIso(run.windowEnd),
+    summaryValue(run.summary, 'modelFamilies'),
+  ].join(' ').toLowerCase();
+  return haystack.includes(query);
+}
+
+function summarizeActiveFilters(search: string, statusFilter: RunStatusFilter, scopeFilter: RunScopeFilter): string {
+  const tags: string[] = [];
+  if (search.trim()) tags.push(`${tr('搜索')}=${search.trim()}`);
+  if (statusFilter !== 'all') tags.push(`${tr('状态')}=${statusFilter}`);
+  if (scopeFilter !== 'all') tags.push(`${tr('窗口')}=${scopeFilter === 'hour' ? tr('小时') : tr('天')}`);
+  return tags.length > 0 ? tags.join('，') : tr('全部任务');
+}
+
+function ReconciliationFilterChip({
+  active,
+  label,
+  count,
+  onClick,
+  icon,
+}: {
+  active: boolean;
+  label: string;
+  count?: number;
+  onClick: () => void;
+  icon?: React.ReactNode;
+}) {
+  return (
+    <button type="button" className={`filter-chip ${active ? 'active' : ''}`} onClick={onClick}>
+      {icon ? <span className="filter-chip-icon">{icon}</span> : null}
+      <span className="filter-chip-label">{label}</span>
+      {typeof count === 'number' ? <span className="filter-chip-count">{count}</span> : null}
+    </button>
+  );
+}
+
+function SwipeableRunCard({
+  run,
+  selected,
+  deleting,
+  onSelect,
+  onDelete,
+}: {
+  run: ReconciliationRunItem;
+  selected: boolean;
+  deleting: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+}) {
+  const revealWidth = 88;
+  const [offset, setOffset] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const startXRef = useRef<number | null>(null);
+  const baseOffsetRef = useRef(0);
+  const movedRef = useRef(false);
+
+  const closeSwipe = () => {
+    setDragging(false);
+    setOffset(0);
+    baseOffsetRef.current = 0;
+    movedRef.current = false;
+  };
+
+  const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    startXRef.current = event.touches[0]?.clientX ?? null;
+    baseOffsetRef.current = offset;
+    movedRef.current = false;
+  };
+
+  const handleTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (startXRef.current === null) return;
+    const currentX = event.touches[0]?.clientX ?? startXRef.current;
+    const deltaX = currentX - startXRef.current;
+    const nextOffset = Math.max(-revealWidth, Math.min(0, baseOffsetRef.current + deltaX));
+    if (Math.abs(deltaX) > 6) {
+      movedRef.current = true;
+      setDragging(true);
+      event.preventDefault();
+    }
+    setOffset(nextOffset);
+  };
+
+  const finalizeSwipe = () => {
+    startXRef.current = null;
+    setDragging(false);
+    const shouldReveal = offset <= -(revealWidth / 2);
+    const nextOffset = shouldReveal ? -revealWidth : 0;
+    setOffset(nextOffset);
+    baseOffsetRef.current = nextOffset;
+  };
+
+  const handleSelect = () => {
+    if (offset < 0 && !dragging) {
+      closeSwipe();
+      return;
+    }
+    if (movedRef.current) {
+      movedRef.current = false;
+      return;
+    }
+    onSelect();
+  };
+
+  return (
+    <div className={`reconciliation-swipe-row ${offset < 0 ? 'is-revealed' : ''} ${dragging ? 'is-dragging' : ''}`.trim()}>
+      <div className="reconciliation-swipe-actions" aria-hidden={offset >= 0}>
+        <button
+          type="button"
+          className="reconciliation-swipe-delete"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete();
+          }}
+          disabled={deleting}
+        >
+          {deleting ? tr('删除中...') : tr('删除')}
+        </button>
+      </div>
+      <div
+        className="reconciliation-swipe-surface"
+        style={{ transform: `translateX(${offset}px)` }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={finalizeSwipe}
+        onTouchCancel={finalizeSwipe}
+      >
+        <MobileCard
+          title={<>{`#${run.id} · ${run.scopeType === 'hour' ? tr('小时窗') : tr('日窗')}`}</>}
+          subtitle={`${formatIso(run.windowStart)} → ${formatIso(run.windowEnd)}`}
+          selected={selected}
+          compact
+          onSelect={handleSelect}
+          headerActions={<span className={`badge ${resolveStatusBadgeClass(run.status)}`} style={{ fontSize: 11 }}>{run.status}</span>}
+          footerActions={<span className="btn-link btn-link-danger">{tr('左滑删除')}</span>}
+        >
+          <div className="mobile-summary-grid">
+            <div className="mobile-summary-metric">
+              <span className="mobile-summary-metric-label">{tr('不匹配')}</span>
+              <span className="mobile-summary-metric-value">{summaryValue(run.summary, 'mismatchCount')}</span>
+            </div>
+            <div className="mobile-summary-metric">
+              <span className="mobile-summary-metric-label">{tr('警告')}</span>
+              <span className="mobile-summary-metric-value">{summaryValue(run.summary, 'warningCount')}</span>
+            </div>
+          </div>
+          <MobileField label={tr('模型族')} value={summaryValue(run.summary, 'modelFamilies')} stacked />
+        </MobileCard>
+      </div>
+    </div>
+  );
+}
+
 function groupResultsByVendor(results: ReconciliationResultItem[]): VendorGroup[] {
   const seed = new Map<VendorGroupKey, VendorGroup>();
   for (const item of results) {
@@ -215,6 +380,13 @@ export default function Reconciliation() {
   const [selectedRun, setSelectedRun] = useState<ReconciliationRunItem | null>(null);
   const [results, setResults] = useState<ReconciliationResultItem[]>([]);
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
+  const [runSearch, setRunSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<RunStatusFilter>('all');
+  const [scopeFilter, setScopeFilter] = useState<RunScopeFilter>('all');
+  const [filtersCollapsed, setFiltersCollapsed] = useState(true);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<ReconciliationRunItem | null>(null);
+  const [deletingRunId, setDeletingRunId] = useState<number | null>(null);
 
   async function loadRunResults(runId: number) {
     const res = await api.getReconciliationRunResults(runId);
@@ -227,8 +399,12 @@ export default function Reconciliation() {
     setLoadingRuns(true);
     try {
       const res = await api.getReconciliationRuns();
-      setRuns(res.items || []);
-      const nextId = preferredRunId ?? selectedRunId ?? res.items?.[0]?.id ?? null;
+      const items = res.items || [];
+      setRuns(items);
+      const candidateId = preferredRunId ?? selectedRunId ?? null;
+      const nextId = candidateId && items.some((item) => item.id === candidateId)
+        ? candidateId
+        : items[0]?.id ?? null;
       if (nextId) {
         await loadRunResults(nextId);
       } else {
@@ -256,6 +432,22 @@ export default function Reconciliation() {
 
   const vendorGroups = useMemo(() => groupResultsByVendor(results), [results]);
 
+  const filteredRuns = useMemo(() => runs.filter((run) => {
+    if (!matchesRunSearch(run, runSearch)) return false;
+    if (statusFilter !== 'all' && String(run.status || '').toLowerCase() !== statusFilter) return false;
+    if (scopeFilter !== 'all' && run.scopeType !== scopeFilter) return false;
+    return true;
+  }), [runSearch, runs, scopeFilter, statusFilter]);
+
+  const runCounts = useMemo(() => ({
+    total: runs.length,
+    running: runs.filter((run) => String(run.status || '').toLowerCase() === 'running').length,
+    succeeded: runs.filter((run) => String(run.status || '').toLowerCase() === 'succeeded').length,
+    failed: runs.filter((run) => String(run.status || '').toLowerCase() === 'failed').length,
+    hour: runs.filter((run) => run.scopeType === 'hour').length,
+    day: runs.filter((run) => run.scopeType === 'day').length,
+  }), [runs]);
+
   const stats = useMemo(() => ({
     totalRuns: runs.length,
     latestStatus: runs[0]?.status || '-',
@@ -265,6 +457,99 @@ export default function Reconciliation() {
   }), [results, runs, vendorGroups.length]);
 
   const currentWindowText = selectedRun ? `${formatIso(selectedRun.windowStart)} → ${formatIso(selectedRun.windowEnd)}` : tr('请选择左侧任务');
+  const activeFilterSummary = summarizeActiveFilters(runSearch, statusFilter, scopeFilter);
+  const activeFilterCount = [runSearch.trim() ? 1 : 0, statusFilter !== 'all' ? 1 : 0, scopeFilter !== 'all' ? 1 : 0].reduce((sum, current) => sum + current, 0);
+
+  const resetRunFilters = () => {
+    setRunSearch('');
+    setStatusFilter('all');
+    setScopeFilter('all');
+  };
+
+  async function confirmDeleteRun() {
+    if (!deleteTarget) return;
+    setDeletingRunId(deleteTarget.id);
+    try {
+      await api.deleteReconciliationRun(deleteTarget.id);
+      toast.success(tr('对账任务已删除'));
+      const remainingRuns = runs.filter((run) => run.id !== deleteTarget.id);
+      const preferredRunId = deleteTarget.id === selectedRunId ? (remainingRuns[0]?.id ?? null) : selectedRunId;
+      setDeleteTarget(null);
+      await loadRuns(preferredRunId ?? null);
+    } catch (error) {
+      toast.error((error as Error)?.message || tr('删除对账任务失败'));
+    } finally {
+      setDeletingRunId(null);
+    }
+  }
+
+  const filterPanelContent = (
+    <>
+      <div className="toolbar" style={{ marginBottom: 0 }}>
+        <div className="toolbar-search">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+            <circle cx="9" cy="9" r="5.5" />
+            <path d="m13.5 13.5 4 4" />
+          </svg>
+          <input
+            value={runSearch}
+            onChange={(event) => setRunSearch(event.target.value)}
+            placeholder={tr('搜索任务号、状态、模型族或时间窗口')}
+          />
+        </div>
+      </div>
+
+      <div className="route-filter-row">
+        <span className="route-filter-row-label">{tr('状态')}</span>
+        <div className="route-filter-row-chips">
+          <ReconciliationFilterChip active={statusFilter === 'all'} label={tr('全部')} count={runCounts.total} onClick={() => setStatusFilter('all')} icon={<span style={{ fontSize: 10 }}>✦</span>} />
+          <ReconciliationFilterChip active={statusFilter === 'running'} label={tr('运行中')} count={runCounts.running} onClick={() => setStatusFilter(statusFilter === 'running' ? 'all' : 'running')} icon={<span style={{ fontSize: 10, color: 'var(--color-warning)' }}>●</span>} />
+          <ReconciliationFilterChip active={statusFilter === 'succeeded'} label={tr('已完成')} count={runCounts.succeeded} onClick={() => setStatusFilter(statusFilter === 'succeeded' ? 'all' : 'succeeded')} icon={<span style={{ fontSize: 10, color: 'var(--color-success)' }}>●</span>} />
+          <ReconciliationFilterChip active={statusFilter === 'failed'} label={tr('失败')} count={runCounts.failed} onClick={() => setStatusFilter(statusFilter === 'failed' ? 'all' : 'failed')} icon={<span style={{ fontSize: 10, color: 'var(--color-danger)' }}>●</span>} />
+        </div>
+      </div>
+
+      <div className="route-filter-row">
+        <span className="route-filter-row-label">{tr('窗口')}</span>
+        <div className="route-filter-row-chips">
+          <ReconciliationFilterChip active={scopeFilter === 'all'} label={tr('全部')} count={runCounts.total} onClick={() => setScopeFilter('all')} icon={<span style={{ fontSize: 10 }}>◎</span>} />
+          <ReconciliationFilterChip active={scopeFilter === 'day'} label={tr('按天')} count={runCounts.day} onClick={() => setScopeFilter(scopeFilter === 'day' ? 'all' : 'day')} icon={<span style={{ fontSize: 10 }}>D</span>} />
+          <ReconciliationFilterChip active={scopeFilter === 'hour'} label={tr('按小时')} count={runCounts.hour} onClick={() => setScopeFilter(scopeFilter === 'hour' ? 'all' : 'hour')} icon={<span style={{ fontSize: 10 }}>H</span>} />
+        </div>
+      </div>
+
+      <div className="reconciliation-filter-section">
+        <div className="reconciliation-filter-section-header">
+          <div>
+            <div className="reconciliation-filter-section-title">{tr('生成设置')}</div>
+            <div className="reconciliation-filter-section-hint">{tr('保持现有对账参数，但把表单做成更清晰的筛选式布局。')}</div>
+          </div>
+          {activeFilterCount > 0 ? (
+            <button type="button" className="btn btn-ghost" style={{ padding: '6px 10px', fontSize: 12 }} onClick={resetRunFilters}>
+              {tr('重置任务筛选')}
+            </button>
+          ) : null}
+        </div>
+        <div className="reconciliation-filter-grid">
+          <label className="reconciliation-filter-field">
+            <span>{tr('时间粒度')}</span>
+            <select value={scopeType} onChange={(e) => setScopeType(e.target.value === 'hour' ? 'hour' : 'day')}>
+              <option value="day">{tr('按天')}</option>
+              <option value="hour">{tr('按小时')}</option>
+            </select>
+          </label>
+          <label className="reconciliation-filter-field">
+            <span>{tr('窗口开始')}</span>
+            <input type="datetime-local" value={windowStart} onChange={(e) => setWindowStart(e.target.value)} />
+          </label>
+          <label className="reconciliation-filter-field">
+            <span>{tr('窗口结束')}</span>
+            <input type="datetime-local" value={windowEnd} onChange={(e) => setWindowEnd(e.target.value)} />
+          </label>
+        </div>
+      </div>
+    </>
+  );
 
   return (
     <div className="page-shell">
@@ -315,59 +600,106 @@ export default function Reconciliation() {
         ))}
       </div>
 
-      <div className="glass-card" style={{ padding: 16, borderRadius: 18, marginBottom: 20 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-          <label style={{ display: 'grid', gap: 6 }}>
-            <span>{tr('时间粒度')}</span>
-            <select value={scopeType} onChange={(e) => setScopeType(e.target.value === 'hour' ? 'hour' : 'day')}>
-              <option value="day">{tr('按天')}</option>
-              <option value="hour">{tr('按小时')}</option>
-            </select>
-          </label>
-          <label style={{ display: 'grid', gap: 6 }}>
-            <span>{tr('窗口开始')}</span>
-            <input type="datetime-local" value={windowStart} onChange={(e) => setWindowStart(e.target.value)} />
-          </label>
-          <label style={{ display: 'grid', gap: 6 }}>
-            <span>{tr('窗口结束')}</span>
-            <input type="datetime-local" value={windowEnd} onChange={(e) => setWindowEnd(e.target.value)} />
-          </label>
-        </div>
-      </div>
+      <ResponsiveFilterPanel
+        isMobile={isMobile}
+        mobileOpen={mobileFiltersOpen}
+        onMobileOpen={() => setMobileFiltersOpen(true)}
+        onMobileClose={() => setMobileFiltersOpen(false)}
+        mobileTitle={tr('任务筛选与生成设置')}
+        mobileContent={filterPanelContent}
+        desktopContent={(
+          <div className="route-filter-bar" style={{ marginBottom: 20 }}>
+            <div className="toolbar" style={{ padding: 10, marginBottom: 0 }}>
+              <div className="toolbar-search">
+                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                  <circle cx="9" cy="9" r="5.5" />
+                  <path d="m13.5 13.5 4 4" />
+                </svg>
+                <input
+                  value={runSearch}
+                  onChange={(event) => setRunSearch(event.target.value)}
+                  placeholder={tr('搜索任务号、状态、模型族或时间窗口')}
+                />
+              </div>
+              <button type="button" className="route-filter-bar-summary" style={{ width: 'auto', minWidth: 240, borderRadius: 12 }} onClick={() => setFiltersCollapsed((current) => !current)}>
+                <svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" style={{ transform: filtersCollapsed ? 'rotate(0deg)' : 'rotate(180deg)', transition: 'transform 0.2s ease' }} aria-hidden>
+                  <path d="m5 7 5 6 5-6" />
+                </svg>
+                <span className="route-filter-bar-summary-label">{tr('筛选')}</span>
+                <span className="route-filter-bar-summary-content">{activeFilterSummary}</span>
+                <span className={`route-filter-bar-summary-count ${activeFilterCount > 0 ? 'has-active' : ''}`.trim()}>{activeFilterCount}</span>
+              </button>
+            </div>
+            <div className={`anim-collapse ${filtersCollapsed ? '' : 'is-open'}`.trim()}>
+              <div className="anim-collapse-inner">
+                <div className="route-filter-bar-expanded">
+                  {filterPanelContent}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        mobileTrigger={(
+          <div className="mobile-filter-row" style={{ justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+            <div className="route-filter-bar-summary-content" style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{activeFilterSummary}</div>
+            <button type="button" className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => setMobileFiltersOpen(true)}>
+              {tr('筛选与设置')}
+            </button>
+          </div>
+        )}
+      />
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(320px, 400px) minmax(0, 1fr)', gap: 20, alignItems: 'start' }}>
         <section className="glass-card" style={{ padding: 16, borderRadius: 18 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <h2 style={{ margin: 0, fontSize: 18 }}>{tr('对账任务')}</h2>
-            <button className="btn btn-secondary" onClick={() => void loadRuns(selectedRunId)} disabled={loadingRuns}>{loadingRuns ? tr('刷新中...') : tr('刷新')}</button>
+            <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void loadRuns(selectedRunId)} disabled={loadingRuns}>{loadingRuns ? tr('刷新中...') : tr('刷新')}</button>
           </div>
-          <div style={{ display: 'grid', gap: 10 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+              {tr('共')} <strong style={{ color: 'var(--color-text-primary)' }}>{filteredRuns.length}</strong> {tr('条可见任务')}
+            </div>
+            {activeFilterCount > 0 ? <span className="badge badge-info">{tr('已筛选')} {activeFilterCount}</span> : null}
+          </div>
+          <div className={isMobile ? 'mobile-card-list' : 'reconciliation-run-list'}>
             {runs.length <= 0 ? (
               <div style={{ color: 'var(--color-text-muted)' }}>{tr('还没有对账任务，先生成一次。')}</div>
-            ) : runs.map((run) => (
-              <button
+            ) : filteredRuns.length <= 0 ? (
+              <div className="subtle-card" style={{ padding: 16, borderRadius: 14, color: 'var(--color-text-muted)' }}>
+                {tr('当前筛选条件下没有匹配任务，试试清空搜索词或恢复全部状态。')}
+              </div>
+            ) : filteredRuns.map((run) => (isMobile ? (
+              <SwipeableRunCard
                 key={run.id}
-                type="button"
-                onClick={() => void loadRunResults(run.id)}
-                style={{
-                  textAlign: 'left',
-                  borderRadius: 16,
-                  border: run.id === selectedRunId ? '1px solid color-mix(in srgb, var(--color-primary) 56%, white)' : '1px solid var(--color-border-light)',
-                  padding: 14,
-                  background: run.id === selectedRunId ? 'color-mix(in srgb, var(--color-primary) 8%, var(--color-bg-card))' : 'var(--color-bg-card)',
-                  boxShadow: run.id === selectedRunId ? '0 12px 28px rgba(79, 70, 229, 0.12)' : 'none',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 6, alignItems: 'center' }}>
-                  <strong>#{run.id} · {run.scopeType === 'hour' ? tr('小时窗') : tr('日窗')}</strong>
-                  <span className={`badge ${resolveStatusBadgeClass(run.status)}`} style={{ fontSize: 11 }}>{run.status}</span>
+                run={run}
+                selected={run.id === selectedRunId}
+                deleting={deletingRunId === run.id}
+                onSelect={() => void loadRunResults(run.id)}
+                onDelete={() => setDeleteTarget(run)}
+              />
+            ) : (
+              <div key={run.id} className={`reconciliation-run-item ${run.id === selectedRunId ? 'is-selected' : ''}`.trim()}>
+                <button
+                  type="button"
+                  className="reconciliation-run-item-main"
+                  onClick={() => void loadRunResults(run.id)}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 6, alignItems: 'center' }}>
+                    <strong>#{run.id} · {run.scopeType === 'hour' ? tr('小时窗') : tr('日窗')}</strong>
+                    <span className={`badge ${resolveStatusBadgeClass(run.status)}`} style={{ fontSize: 11 }}>{run.status}</span>
+                  </div>
+                  <div style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>{formatIso(run.windowStart)} → {formatIso(run.windowEnd)}</div>
+                  <div style={{ color: 'var(--color-text-muted)', fontSize: 12, marginTop: 8, lineHeight: 1.7 }}>
+                    {tr('不匹配')} {summaryValue(run.summary, 'mismatchCount')} · {tr('警告')} {summaryValue(run.summary, 'warningCount')} · {tr('模型族')} {summaryValue(run.summary, 'modelFamilies')}
+                  </div>
+                </button>
+                <div className="reconciliation-run-item-actions">
+                  <button type="button" className="btn-link btn-link-danger" onClick={() => setDeleteTarget(run)} disabled={deletingRunId === run.id}>
+                    {deletingRunId === run.id ? tr('删除中...') : tr('删除')}
+                  </button>
                 </div>
-                <div style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>{formatIso(run.windowStart)} → {formatIso(run.windowEnd)}</div>
-                <div style={{ color: 'var(--color-text-muted)', fontSize: 12, marginTop: 8 }}>
-                  {tr('不匹配')} {summaryValue(run.summary, 'mismatchCount')} · {tr('警告')} {summaryValue(run.summary, 'warningCount')} · {tr('模型族')} {summaryValue(run.summary, 'modelFamilies')}
-                </div>
-              </button>
-            ))}
+              </div>
+            )))}
           </div>
         </section>
 
@@ -505,6 +837,18 @@ export default function Reconciliation() {
           })}
         </section>
       </div>
+
+      <DeleteConfirmModal
+        open={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => void confirmDeleteRun()}
+        title={tr('删除对账任务')}
+        confirmText={tr('确认删除')}
+        loading={deletingRunId !== null}
+        description={deleteTarget
+          ? <>{tr('删除任务')} <strong>#{deleteTarget.id}</strong> {tr('后，会一并清空该次运行关联的事实与结果数据。')}</>
+          : tr('确认删除当前对账任务吗？')}
+      />
     </div>
   );
 }

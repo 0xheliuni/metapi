@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import {
   createReconciliationRun,
+  deleteReconciliationRunById,
   getReconciliationResultsByRunId,
   getReconciliationRunById,
   listReconciliationRuns,
@@ -51,5 +52,13 @@ export async function reconciliationRoutes(app: FastifyInstance) {
       item,
       results: await getReconciliationResultsByRunId(id),
     };
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/reconciliation/runs/:id', async (request, reply) => {
+    const id = parseRouteId(request.params.id);
+    if (!id) return reply.code(400).send({ success: false, message: 'id 无效' });
+    const deleted = await deleteReconciliationRunById(id);
+    if (!deleted) return reply.code(404).send({ success: false, message: '对账任务不存在' });
+    return { success: true };
   });
 }

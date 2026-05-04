@@ -917,6 +917,10 @@ export const api = {
       item: ReconciliationRunItem;
       results: ReconciliationResultItem[];
     }>,
+  deleteReconciliationRun: (id: number) =>
+    request(`/api/reconciliation/runs/${id}`, {
+      method: 'DELETE',
+    }) as Promise<{ success: boolean }>,
   getSiteDisabledModels: (siteId: number) =>
     request(`/api/sites/${siteId}/disabled-models`),
   updateSiteDisabledModels: (siteId: number, models: string[]) =>

@@ -6,6 +6,8 @@ import {
   normalizeConsoleSidebarVisibilityMap,
 } from '../shared/consoleSidebarVisibility.js';
 
+export type { ConsoleSidebarItemId, ConsoleSidebarVisibility } from '../shared/consoleSidebarVisibility.js';
+
 export const CONSOLE_SIDEBAR_VISIBILITY_CHANGED_EVENT = 'metapi:console-sidebar-visibility-changed';
 
 export type SidebarItem = {
