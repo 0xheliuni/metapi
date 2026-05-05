@@ -32,6 +32,42 @@ export const ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS: AccountTokenColumnCompati
       postgres: "ALTER TABLE \"account_tokens\" ADD COLUMN \"value_status\" TEXT NOT NULL DEFAULT 'ready'",
     },
   },
+  {
+    table: 'account_tokens',
+    column: 'used_quota',
+    addSql: {
+      sqlite: 'ALTER TABLE account_tokens ADD COLUMN used_quota real;',
+      mysql: 'ALTER TABLE `account_tokens` ADD COLUMN `used_quota` DOUBLE NULL',
+      postgres: 'ALTER TABLE "account_tokens" ADD COLUMN "used_quota" DOUBLE PRECISION',
+    },
+  },
+  {
+    table: 'account_tokens',
+    column: 'remain_quota',
+    addSql: {
+      sqlite: 'ALTER TABLE account_tokens ADD COLUMN remain_quota real;',
+      mysql: 'ALTER TABLE `account_tokens` ADD COLUMN `remain_quota` DOUBLE NULL',
+      postgres: 'ALTER TABLE "account_tokens" ADD COLUMN "remain_quota" DOUBLE PRECISION',
+    },
+  },
+  {
+    table: 'account_tokens',
+    column: 'unlimited_quota',
+    addSql: {
+      sqlite: 'ALTER TABLE account_tokens ADD COLUMN unlimited_quota integer;',
+      mysql: 'ALTER TABLE `account_tokens` ADD COLUMN `unlimited_quota` BOOLEAN NULL',
+      postgres: 'ALTER TABLE "account_tokens" ADD COLUMN "unlimited_quota" BOOLEAN',
+    },
+  },
+  {
+    table: 'account_tokens',
+    column: 'manual_group_ratio',
+    addSql: {
+      sqlite: 'ALTER TABLE account_tokens ADD COLUMN manual_group_ratio real;',
+      mysql: 'ALTER TABLE `account_tokens` ADD COLUMN `manual_group_ratio` DOUBLE NULL',
+      postgres: 'ALTER TABLE "account_tokens" ADD COLUMN "manual_group_ratio" DOUBLE PRECISION',
+    },
+  },
 ];
 
 function normalizeSchemaErrorMessage(error: unknown): string {

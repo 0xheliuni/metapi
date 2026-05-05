@@ -8,9 +8,18 @@ type UpstreamApiToken = {
   key?: string | null;
   enabled?: boolean | null;
   tokenGroup?: string | null;
+  usedQuota?: number | null;
+  remainQuota?: number | null;
+  unlimitedQuota?: boolean | null;
 };
 
 type AccountTokenRow = typeof schema.accountTokens.$inferSelect;
+
+type AccountTokenRelationRow = {
+  account_tokens: AccountTokenRow;
+  accounts: typeof schema.accounts.$inferSelect;
+  sites: typeof schema.sites.$inferSelect;
+};
 
 export const ACCOUNT_TOKEN_VALUE_STATUS_READY = 'ready' as const;
 export const ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING = 'masked_pending' as const;
@@ -158,6 +167,22 @@ function sameTokenGroup(
   return normalizeTokenGroup(leftGroup, leftName) === normalizeTokenGroup(rightGroup, rightName);
 }
 
+function normalizeQuotaNumber(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function normalizeQuotaBoolean(value: boolean | null | undefined): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+function buildTokenQuotaUpdate(upstream: UpstreamApiToken) {
+  return {
+    usedQuota: normalizeQuotaNumber(upstream.usedQuota),
+    remainQuota: normalizeQuotaNumber(upstream.remainQuota),
+    unlimitedQuota: normalizeQuotaBoolean(upstream.unlimitedQuota),
+  };
+}
+
 async function updateAccountApiToken(accountId: number, tokenValue: string | null) {
   await db.update(schema.accounts)
     .set({ apiToken: tokenValue || null, updatedAt: new Date().toISOString() })
@@ -175,7 +200,7 @@ export async function getPreferredAccountToken(accountId: number) {
   const tokens = await db.select()
     .from(schema.accountTokens)
     .where(and(eq(schema.accountTokens.accountId, accountId), eq(schema.accountTokens.enabled, true)))
-    .all();
+    .all() as AccountTokenRow[];
 
   const usableTokens = tokens.filter(isUsableAccountToken);
   if (usableTokens.length === 0) return null;
@@ -198,7 +223,7 @@ export async function ensureDefaultTokenForAccount(
   const tokens = await db.select()
     .from(schema.accountTokens)
     .where(eq(schema.accountTokens.accountId, accountId))
-    .all();
+    .all() as AccountTokenRow[];
 
   let target = tokens.find((t) => t.token === normalizedToken) || null;
   if (!target) {
@@ -268,7 +293,7 @@ export async function repairDefaultToken(accountId: number) {
   const tokens = await db.select()
     .from(schema.accountTokens)
     .where(eq(schema.accountTokens.accountId, accountId))
-    .all();
+    .all() as AccountTokenRow[];
 
   const enabled = tokens.filter(isUsableAccountToken);
   if (enabled.length === 0) {
@@ -298,7 +323,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
   const existing = await db.select()
     .from(schema.accountTokens)
     .where(eq(schema.accountTokens.accountId, accountId))
-    .all();
+    .all() as AccountTokenRow[];
 
   let created = 0;
   let updated = 0;
@@ -312,6 +337,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
     const tokenName = normalizeTokenName(upstream.name, index);
     const enabled = upstream.enabled ?? true;
     const tokenGroup = normalizeTokenGroup(upstream.tokenGroup, tokenName);
+    const quotaUpdate = buildTokenQuotaUpdate(upstream);
     const nextValueStatus = isMaskedTokenValue(tokenValue)
       ? ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING
       : ACCOUNT_TOKEN_VALUE_STATUS_READY;
@@ -328,6 +354,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
           valueStatus: ACCOUNT_TOKEN_VALUE_STATUS_READY,
           source: 'sync',
           enabled,
+          ...quotaUpdate,
           updatedAt: now,
         })
         .where(eq(schema.accountTokens.id, byToken.id))
@@ -338,6 +365,9 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
       byToken.enabled = enabled;
       byToken.source = 'sync';
       byToken.updatedAt = now;
+      byToken.usedQuota = quotaUpdate.usedQuota;
+      byToken.remainQuota = quotaUpdate.remainQuota;
+      byToken.unlimitedQuota = quotaUpdate.unlimitedQuota;
       updated++;
       continue;
     }
@@ -369,6 +399,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
           valueStatus: ACCOUNT_TOKEN_VALUE_STATUS_READY,
           source: 'sync',
           enabled,
+          ...quotaUpdate,
           updatedAt: now,
         })
         .where(eq(schema.accountTokens.id, readyMaskedMatch.id))
@@ -379,6 +410,9 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
       readyMaskedMatch.enabled = enabled;
       readyMaskedMatch.source = 'sync';
       readyMaskedMatch.updatedAt = now;
+      readyMaskedMatch.usedQuota = quotaUpdate.usedQuota;
+      readyMaskedMatch.remainQuota = quotaUpdate.remainQuota;
+      readyMaskedMatch.unlimitedQuota = quotaUpdate.unlimitedQuota;
 
       if (staleMaskedPlaceholders.length > 0) {
         for (const placeholder of staleMaskedPlaceholders) {
@@ -415,6 +449,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
           source: 'sync',
           enabled: nextEnabled,
           isDefault: false,
+          ...quotaUpdate,
           updatedAt: now,
         })
         .where(eq(schema.accountTokens.id, matchingPlaceholder.id))
@@ -427,6 +462,9 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
       matchingPlaceholder.enabled = nextEnabled;
       matchingPlaceholder.isDefault = false;
       matchingPlaceholder.updatedAt = now;
+      matchingPlaceholder.usedQuota = quotaUpdate.usedQuota;
+      matchingPlaceholder.remainQuota = quotaUpdate.remainQuota;
+      matchingPlaceholder.unlimitedQuota = quotaUpdate.unlimitedQuota;
       updated++;
       if (nextValueStatus === ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING) {
         maskedPending++;
@@ -445,6 +483,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
         source: 'sync',
         enabled: nextValueStatus === ACCOUNT_TOKEN_VALUE_STATUS_READY ? enabled : false,
         isDefault: false,
+        ...quotaUpdate,
         createdAt: now,
         updatedAt: now,
       })
@@ -481,9 +520,9 @@ export async function listTokensWithRelations(accountId?: number) {
     .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id));
 
-  const rows = accountId
+  const rows = (accountId
     ? await base.where(eq(schema.accountTokens.accountId, accountId)).all()
-    : await base.all();
+    : await base.all()) as AccountTokenRelationRow[];
 
   return rows
     .filter((row) => !isApiKeyConnection(row.accounts))

@@ -849,6 +849,76 @@ export type ReconciliationResultItem = {
   updatedAt: string | null;
 };
 
+export type ReconciliationComparisonProvider = 'all' | 'openai' | 'anthropic' | 'google' | 'other';
+export type ReconciliationComparisonModelGroup = 'all' | 'gpt' | 'claude' | 'gemini' | 'other';
+
+export type ReconciliationComparisonMetapiChannel = {
+  key: string;
+  routeId: number | null;
+  routeModelPattern: string | null;
+  channelId: number | null;
+  sourceModel: string | null;
+  accountId: number | null;
+  siteId: number | null;
+  siteName: string | null;
+  tokenId: number | null;
+  tokenName: string | null;
+  requestCount: number;
+  observedTokens: number;
+  observedCostUsd: number;
+  downstreamApiKeyIds: number[];
+};
+
+export type ReconciliationComparisonSupplierChannel = {
+  key: string;
+  remoteChannelId: string;
+  remoteName: string;
+  remoteGroup: string | null;
+  requestCount: number | null;
+  consumedQuota: number | null;
+  consumedCostUsd: number | null;
+  syncedAt: string | null;
+  basis: 'snapshot-fallback';
+  confidence: number;
+  notes: string[];
+};
+
+export type ReconciliationComparisonGroup = {
+  groupKey: string;
+  downstreamSiteId: number | null;
+  downstreamSiteName: string | null;
+  hostSiteId: number | null;
+  hostSiteName: string | null;
+  provider: Exclude<ReconciliationComparisonProvider, 'all'>;
+  modelGroup: Exclude<ReconciliationComparisonModelGroup, 'all'>;
+  modelCanonicalSamples: string[];
+  metapiTotals: {
+    requestCount: number;
+    observedTokens: number;
+    observedCostUsd: number;
+    channelCount: number;
+  };
+  supplierTotals: {
+    requestCount: number | null;
+    consumedQuota: number | null;
+    consumedCostUsd: number | null;
+    channelCount: number;
+  };
+  metapiChannels: ReconciliationComparisonMetapiChannel[];
+  supplierChannels: ReconciliationComparisonSupplierChannel[];
+};
+
+export type ReconciliationComparisonData = {
+  basis: 'snapshot-fallback';
+  warnings: string[];
+  filters: {
+    downstreamSiteId: number | null;
+    provider: ReconciliationComparisonProvider;
+    modelGroup: ReconciliationComparisonModelGroup;
+  };
+  groups: ReconciliationComparisonGroup[];
+};
+
 export const api = {
   // Sites
   getSites: () => request("/api/sites"),
@@ -916,6 +986,20 @@ export const api = {
       success: boolean;
       item: ReconciliationRunItem;
       results: ReconciliationResultItem[];
+    }>,
+  getReconciliationComparison: (id: number, params?: {
+    downstreamSiteId?: number | null;
+    provider?: ReconciliationComparisonProvider;
+    modelGroup?: ReconciliationComparisonModelGroup;
+  }) =>
+    request(`/api/reconciliation/runs/${id}/comparison${buildQueryString({
+      downstreamSiteId: params?.downstreamSiteId ?? undefined,
+      provider: params?.provider ?? undefined,
+      modelGroup: params?.modelGroup ?? undefined,
+    })}`) as Promise<{
+      success: boolean;
+      item: ReconciliationRunItem;
+      comparison: ReconciliationComparisonData;
     }>,
   deleteReconciliationRun: (id: number) =>
     request(`/api/reconciliation/runs/${id}`, {

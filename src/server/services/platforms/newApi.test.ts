@@ -251,7 +251,7 @@ describe('NewApiAdapter', () => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           data: {
-            items: [{ key: 'api-key-from-token-list' }],
+            items: [{ key: 'api-key-from-token-list', used_quota: 4360239, remain_quota: 639761, unlimited_quota: false }],
           },
         }));
         return;
@@ -737,6 +737,18 @@ describe('NewApiAdapter', () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toBe('今天已经签到过啦');
+  });
+
+  it('normalizes account token quota fields from raw units to yuan amounts', async () => {
+    const adapter = new NewApiAdapter();
+    const tokens = await adapter.getApiTokens(baseUrl, 'session-token', 11494);
+
+    expect(tokens[0]).toMatchObject({
+      key: 'api-key-from-token-list',
+      usedQuota: 4360239 / 500000,
+      remainQuota: 639761 / 500000,
+      unlimitedQuota: false,
+    });
   });
 
   it('returns clean groups from data object without envelope keys', async () => {

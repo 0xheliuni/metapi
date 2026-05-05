@@ -64,7 +64,12 @@ export interface ApiTokenInfo {
   key: string;
   enabled?: boolean;
   tokenGroup?: string | null;
+  usedQuota?: number | null;
+  remainQuota?: number | null;
+  unlimitedQuota?: boolean | null;
 }
+
+export type UserGroupRatioMap = Record<string, number>;
 
 export interface SiteAnnouncement {
   sourceKey: string;
@@ -103,6 +108,7 @@ export interface PlatformAdapter {
   getApiTokens(baseUrl: string, accessToken: string, platformUserId?: number): Promise<ApiTokenInfo[]>;
   getSiteAnnouncements(baseUrl: string, accessToken: string, platformUserId?: number): Promise<SiteAnnouncement[]>;
   getUserGroups(baseUrl: string, accessToken: string, platformUserId?: number): Promise<string[]>;
+  getUserGroupRatios(baseUrl: string, accessToken: string, platformUserId?: number): Promise<UserGroupRatioMap>;
   createApiToken(baseUrl: string, accessToken: string, platformUserId?: number, options?: CreateApiTokenOptions): Promise<boolean>;
   deleteApiToken(baseUrl: string, accessToken: string, tokenKey: string, platformUserId?: number): Promise<boolean>;
 }
@@ -208,6 +214,14 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
     _platformUserId?: number,
   ): Promise<string[]> {
     return ['default'];
+  }
+
+  async getUserGroupRatios(
+    _baseUrl: string,
+    _accessToken: string,
+    _platformUserId?: number,
+  ): Promise<UserGroupRatioMap> {
+    return { default: 1 };
   }
 
   async deleteApiToken(

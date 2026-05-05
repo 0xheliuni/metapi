@@ -62,6 +62,30 @@
           "defaultValue": null,
           "primaryKey": false
         },
+        "used_quota": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "remain_quota": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "unlimited_quota": {
+          "logicalType": "boolean",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "manual_group_ratio": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
         "value_status": {
           "logicalType": "text",
           "notNull": true,

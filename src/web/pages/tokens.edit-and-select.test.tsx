@@ -129,6 +129,7 @@ describe('Tokens edit modal and row selection', () => {
     apiMock.getAccountTokenGroups.mockResolvedValue({
       success: true,
       groups: ['default', 'vip'],
+      groupRatios: { default: 1, vip: 2.5 },
     });
     apiMock.updateAccountToken.mockResolvedValue({
       success: true,
@@ -154,6 +155,7 @@ describe('Tokens edit modal and row selection', () => {
       });
       await flushMicrotasks();
 
+      const callsBeforeEdit = apiMock.getAccountTokenGroups.mock.calls.length;
       const editButton = root.root
         .findAll((node) => node.type === 'button')
         .find((node) => collectText(node).includes('编辑'));
@@ -171,6 +173,7 @@ describe('Tokens edit modal and row selection', () => {
       expect(rendered).toContain('基本信息');
       expect(rendered).toContain('状态设置');
       expect(rendered).toContain('分组');
+      expect(rendered).toContain('手动分组倍率');
       const modals = root.root.findAll((node) => {
         const className = typeof node.props?.className === 'string' ? node.props.className : '';
         return className.includes('modal-content') && collectText(node).includes('编辑令牌');
@@ -188,7 +191,252 @@ describe('Tokens edit modal and row selection', () => {
       });
       await flushMicrotasks();
 
-      expect(apiMock.updateAccountToken).toHaveBeenCalledWith(22, expect.objectContaining({ group: 'default' }));
+      expect(apiMock.updateAccountToken).toHaveBeenCalledWith(22, expect.objectContaining({ group: 'default', manualGroupRatio: null }));
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows only used quota for unlimited account tokens', async () => {
+    apiMock.getAccountTokens.mockResolvedValue([
+      {
+        id: 55,
+        name: 'unlimited-token',
+        tokenMasked: 'sk-unlimited****',
+        valueStatus: 'ready',
+        enabled: true,
+        isDefault: false,
+        usedQuota: 8.72,
+        remainQuota: null,
+        unlimitedQuota: true,
+        updatedAt: '2026-03-17 10:00:00',
+        accountId: 1,
+        account: { username: 'session-user' },
+        site: { name: 'Session Site', url: 'https://session.example.com' },
+      },
+    ]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = buildTokensRoot();
+      });
+      await flushMicrotasks();
+
+      const rendered = JSON.stringify(root.toJSON());
+      const text = collectText(root.root);
+      expect(rendered).toContain('额度');
+      expect(rendered).toContain('分组倍率');
+      expect(text).toContain('1.00x');
+      expect(text).toContain('已用 ¥8.72');
+      expect(text).not.toContain('剩余');
+      expect(text).not.toContain('总额');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows used remaining and total quota for limited account tokens', async () => {
+    apiMock.getAccountTokens.mockResolvedValue([
+      {
+        id: 56,
+        name: 'limited-token',
+        tokenMasked: 'sk-limited****',
+        valueStatus: 'ready',
+        enabled: true,
+        isDefault: false,
+        usedQuota: 8.720478,
+        remainQuota: 1.279522,
+        unlimitedQuota: false,
+        updatedAt: '2026-03-17 10:00:00',
+        accountId: 1,
+        account: { username: 'session-user' },
+        site: { name: 'Session Site', url: 'https://session.example.com' },
+      },
+    ]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = buildTokensRoot();
+      });
+      await flushMicrotasks();
+
+      const text = collectText(root.root);
+      expect(text).toContain('已用 ¥8.72');
+      expect(text).toContain('剩余 ¥1.28');
+      expect(text).toContain('总额 ¥10.00');
+      const rendered = JSON.stringify(root.toJSON());
+      expect(rendered).not.toContain('已用 ¥8.72 / 剩余 ¥1.28 / 总额 ¥10.00');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('normalizes legacy raw quota values before display', async () => {
+    apiMock.getAccountTokens.mockResolvedValue([
+      {
+        id: 57,
+        name: 'legacy-raw-quota-token',
+        tokenMasked: 'sk-raw****',
+        valueStatus: 'ready',
+        enabled: true,
+        isDefault: false,
+        usedQuota: 4360239,
+        remainQuota: 639761,
+        unlimitedQuota: false,
+        updatedAt: '2026-03-17 10:00:00',
+        accountId: 1,
+        account: { username: 'session-user' },
+        site: { name: 'Session Site', url: 'https://session.example.com' },
+      },
+    ]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = buildTokensRoot();
+      });
+      await flushMicrotasks();
+
+      const text = collectText(root.root);
+      expect(text).toContain('已用 ¥8.72');
+      expect(text).toContain('剩余 ¥1.28');
+      expect(text).toContain('总额 ¥10.00');
+      const rendered = JSON.stringify(root.toJSON());
+      expect(rendered).not.toContain('¥4360239.00');
+      expect(rendered).not.toContain('¥639761.00');
+      expect(rendered).not.toContain('¥5000000.00');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows token group ratio from account group metadata', async () => {
+    apiMock.getAccountTokens.mockResolvedValue([
+      {
+        id: 58,
+        name: 'vip-token',
+        tokenMasked: 'sk-vip****',
+        valueStatus: 'ready',
+        enabled: true,
+        isDefault: false,
+        tokenGroup: 'vip',
+        updatedAt: '2026-03-17 10:00:00',
+        accountId: 1,
+        account: { username: 'session-user' },
+        site: { name: 'Session Site', url: 'https://session.example.com' },
+      },
+    ]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = buildTokensRoot();
+      });
+      await flushMicrotasks();
+
+      const text = collectText(root.root);
+      expect(text).toContain('分组倍率');
+      expect(text).toContain('2.50x');
+      expect(apiMock.getAccountTokenGroups).toHaveBeenCalledWith(1);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('prefers token groupRatio returned by the account token list', async () => {
+    apiMock.getAccountTokens.mockResolvedValue([
+      {
+        id: 59,
+        name: 'direct-ratio-token',
+        tokenMasked: 'sk-direct****',
+        valueStatus: 'ready',
+        enabled: true,
+        isDefault: false,
+        tokenGroup: 'vip',
+        groupRatio: 3.75,
+        updatedAt: '2026-03-17 10:00:00',
+        accountId: 1,
+        account: { username: 'session-user' },
+        site: { name: 'Session Site', url: 'https://session.example.com' },
+      },
+    ]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = buildTokensRoot();
+      });
+      await flushMicrotasks();
+
+      const text = collectText(root.root);
+      expect(text).toContain('3.75x');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('saves manual group ratio from the edit modal', async () => {
+    apiMock.getAccountTokens.mockResolvedValue([
+      {
+        id: 60,
+        name: 'manual-ratio-token',
+        tokenMasked: 'sk-manual****',
+        valueStatus: 'ready',
+        enabled: true,
+        isDefault: false,
+        tokenGroup: 'vip',
+        manualGroupRatio: 4.25,
+        groupRatio: 4.25,
+        updatedAt: '2026-03-17 10:00:00',
+        accountId: 1,
+        account: { username: 'session-user' },
+        site: { name: 'Session Site', url: 'https://session.example.com' },
+      },
+    ]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = buildTokensRoot();
+      });
+      await flushMicrotasks();
+
+      const editButton = root.root
+        .findAll((node) => node.type === 'button')
+        .find((node) => collectText(node).includes('编辑'));
+      expect(editButton).toBeTruthy();
+
+      await act(async () => {
+        editButton!.props.onClick({ stopPropagation: () => undefined });
+      });
+      await flushMicrotasks();
+
+      const ratioInput = root.root
+        .findAll((node) => node.type === 'input')
+        .find((node) => node.props?.placeholder === '留空使用接口倍率');
+      expect(ratioInput).toBeTruthy();
+      expect(ratioInput!.props.value).toBe('4.25');
+
+      await act(async () => {
+        ratioInput!.props.onChange({ target: { value: '5.5' } });
+      });
+
+      const saveButton = root.root
+        .findAll((node) => node.type === 'button')
+        .find((node) => collectText(node).includes('保存修改'));
+      expect(saveButton).toBeTruthy();
+
+      await act(async () => {
+        saveButton!.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.updateAccountToken).toHaveBeenCalledWith(60, expect.objectContaining({
+        group: 'vip',
+        manualGroupRatio: '5.5',
+      }));
     } finally {
       root?.unmount();
     }
@@ -243,6 +491,7 @@ describe('Tokens edit modal and row selection', () => {
       });
       await flushMicrotasks();
 
+      const callsBeforeEdit = apiMock.getAccountTokenGroups.mock.calls.length;
       const editButton = root.root
         .findAll((node) => node.type === 'button')
         .find((node) => collectText(node).includes('编辑'));
@@ -255,7 +504,7 @@ describe('Tokens edit modal and row selection', () => {
       await flushMicrotasks();
       await flushMicrotasks();
 
-      expect(apiMock.getAccountTokenGroups).toHaveBeenCalledTimes(1);
+      expect(apiMock.getAccountTokenGroups.mock.calls.length - callsBeforeEdit).toBe(1);
     } finally {
       root?.unmount();
     }

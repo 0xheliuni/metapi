@@ -3,6 +3,7 @@ import { db, schema } from '../db/index.js';
 export type ReconciliationModelIdentity = {
   canonical: string | null;
   family: 'claude' | 'gpt' | 'gemini' | 'other';
+  provider: 'openai' | 'anthropic' | 'google' | 'other';
   matchedPattern: string | null;
 };
 
@@ -20,19 +21,43 @@ function normalizeFamily(value: unknown): ReconciliationModelIdentity['family'] 
   return 'other';
 }
 
+function normalizeProvider(value: unknown): ReconciliationModelIdentity['provider'] {
+  const normalized = normalizeText(value).toLowerCase();
+  if (normalized === 'openai' || normalized === 'anthropic' || normalized === 'google') {
+    return normalized;
+  }
+  return 'other';
+}
+
+function providerFromFamily(family: ReconciliationModelIdentity['family']): ReconciliationModelIdentity['provider'] {
+  if (family === 'gpt') return 'openai';
+  if (family === 'claude') return 'anthropic';
+  if (family === 'gemini') return 'google';
+  return 'other';
+}
+
 function inferBuiltInModelFamily(rawValue: string): ReconciliationModelIdentity {
   const lowered = rawValue.toLowerCase();
-  if (!lowered) return { canonical: null, family: 'other', matchedPattern: null };
+  if (!lowered) return { canonical: null, family: 'other', provider: 'other', matchedPattern: null };
   if (lowered.includes('claude')) {
-    return { canonical: rawValue, family: 'claude', matchedPattern: null };
+    return { canonical: rawValue, family: 'claude', provider: 'anthropic', matchedPattern: null };
+  }
+  if (lowered.includes('anthropic')) {
+    return { canonical: rawValue, family: 'claude', provider: 'anthropic', matchedPattern: null };
   }
   if (lowered.includes('gpt') || lowered.includes('o1') || lowered.includes('o3') || lowered.includes('o4')) {
-    return { canonical: rawValue, family: 'gpt', matchedPattern: null };
+    return { canonical: rawValue, family: 'gpt', provider: 'openai', matchedPattern: null };
+  }
+  if (lowered.includes('openai')) {
+    return { canonical: rawValue, family: 'gpt', provider: 'openai', matchedPattern: null };
   }
   if (lowered.includes('gemini')) {
-    return { canonical: rawValue, family: 'gemini', matchedPattern: null };
+    return { canonical: rawValue, family: 'gemini', provider: 'google', matchedPattern: null };
   }
-  return { canonical: rawValue || null, family: 'other', matchedPattern: null };
+  if (lowered.includes('google')) {
+    return { canonical: rawValue, family: 'gemini', provider: 'google', matchedPattern: null };
+  }
+  return { canonical: rawValue || null, family: 'other', provider: 'other', matchedPattern: null };
 }
 
 function matchesPattern(value: string, pattern: string): boolean {
@@ -74,9 +99,11 @@ export async function normalizeReconciliationModel(params: {
   for (const candidate of candidates) {
     for (const mapping of mappings) {
       if (matchesPattern(candidate, mapping.pattern)) {
+        const family = normalizeFamily(mapping.modelFamily);
         return {
           canonical: normalizeText(mapping.modelCanonical) || candidate,
-          family: normalizeFamily(mapping.modelFamily),
+          family,
+          provider: normalizeProvider(mapping.supplierHint) || providerFromFamily(family),
           matchedPattern: mapping.pattern,
         };
       }

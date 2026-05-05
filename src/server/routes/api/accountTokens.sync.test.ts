@@ -10,6 +10,7 @@ const getApiTokensMock = vi.fn();
 const getApiTokenMock = vi.fn();
 const createApiTokenMock = vi.fn();
 const getUserGroupsMock = vi.fn();
+const getUserGroupRatiosMock = vi.fn();
 const deleteApiTokenMock = vi.fn();
 
 type AccountTokenServiceModule = typeof import('../../services/accountTokenService.js');
@@ -20,6 +21,7 @@ vi.mock('../../services/platforms/index.js', () => ({
     getApiToken: (...args: unknown[]) => getApiTokenMock(...args),
     createApiToken: (...args: unknown[]) => createApiTokenMock(...args),
     getUserGroups: (...args: unknown[]) => getUserGroupsMock(...args),
+    getUserGroupRatios: (...args: unknown[]) => getUserGroupRatiosMock(...args),
     deleteApiToken: (...args: unknown[]) => deleteApiTokenMock(...args),
   }),
 }));
@@ -85,6 +87,7 @@ describe('account tokens sync routes with site status', () => {
     getApiTokenMock.mockReset();
     createApiTokenMock.mockReset();
     getUserGroupsMock.mockReset();
+    getUserGroupRatiosMock.mockReset();
     deleteApiTokenMock.mockReset();
     seedId = 0;
 
@@ -206,6 +209,60 @@ describe('account tokens sync routes with site status', () => {
       expect.objectContaining({
         id: tokenRows[0].id,
         valueStatus: 'masked_pending',
+      }),
+    ]);
+  });
+
+  it('syncs upstream token quota metadata for unlimited tokens', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+    getApiTokensMock.mockResolvedValue([
+      {
+        name: 'unlimited-token',
+        key: 'sk-unlimited-token',
+        enabled: true,
+        unlimitedQuota: true,
+        usedQuota: 8.72,
+        remainQuota: null,
+      },
+    ]);
+    getApiTokenMock.mockResolvedValue(null);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/account-tokens/sync/${account.id}`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      synced: true,
+      created: 1,
+      updated: 0,
+    });
+
+    const tokenRows = await db.select()
+      .from(schema.accountTokens)
+      .where(eq(schema.accountTokens.accountId, account.id))
+      .all();
+    expect(tokenRows).toHaveLength(1);
+    expect(tokenRows[0]).toMatchObject({
+      name: 'unlimited-token',
+      usedQuota: 8.72,
+      remainQuota: null,
+      unlimitedQuota: true,
+    });
+
+    const listResponse = await app.inject({
+      method: 'GET',
+      url: '/api/account-tokens',
+    });
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json()).toMatchObject([
+      expect.objectContaining({
+        id: tokenRows[0].id,
+        usedQuota: 8.72,
+        remainQuota: null,
+        unlimitedQuota: true,
       }),
     ]);
   });
@@ -770,6 +827,7 @@ describe('account tokens sync routes with site status', () => {
   it('fetches account token groups from upstream', async () => {
     const { account } = await seedAccount({ siteStatus: 'active' });
     getUserGroupsMock.mockResolvedValue(['default', 'vip']);
+    getUserGroupRatiosMock.mockResolvedValue({ default: 1, vip: 2.5 });
 
     const response = await app.inject({
       method: 'GET',
@@ -780,8 +838,71 @@ describe('account tokens sync routes with site status', () => {
     expect(response.json()).toMatchObject({
       success: true,
       groups: ['default', 'vip'],
+      groupRatios: { default: 1, vip: 2.5 },
     });
     expect(getUserGroupsMock).toHaveBeenCalledTimes(1);
+    expect(getUserGroupRatiosMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns account token groupRatio in the token list', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'vip-token',
+      token: 'sk-vip-token',
+      tokenGroup: 'vip',
+      manualGroupRatio: 4.25,
+      source: 'sync',
+      enabled: true,
+      isDefault: false,
+    }).run();
+    getUserGroupRatiosMock.mockResolvedValue({ default: 1, vip: 2.5 });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/account-tokens',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject([
+      expect.objectContaining({
+        name: 'vip-token',
+        tokenGroup: 'vip',
+        manualGroupRatio: 4.25,
+        groupRatio: 4.25,
+      }),
+    ]);
+    expect(getUserGroupRatiosMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('updates manual account token group ratio', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'editable-ratio-token',
+      token: 'sk-editable-ratio-token',
+      tokenGroup: 'vip',
+      source: 'sync',
+      enabled: true,
+      isDefault: false,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/account-tokens/${token.id}`,
+      payload: {
+        manualGroupRatio: '3.75',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      token: expect.objectContaining({ manualGroupRatio: 3.75 }),
+    });
+
+    const updated = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, token.id)).get();
+    expect(updated?.manualGroupRatio).toBe(3.75);
   });
 
   it('deletes upstream token before removing local token', async () => {

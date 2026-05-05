@@ -1,8 +1,10 @@
-import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo, TokenVerifyResult, CreateApiTokenOptions, type SiteAnnouncement } from './base.js';
+import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo, TokenVerifyResult, CreateApiTokenOptions, type SiteAnnouncement, type UserGroupRatioMap } from './base.js';
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
 import { fetchJsonWithShieldCookieRetry } from './newApiShield.js';
+
+const TOKEN_QUOTA_UNITS_PER_YUAN = 500_000;
 
 export class NewApiAdapter extends BasePlatformAdapter {
   readonly platformName: string = 'new-api';
@@ -268,6 +270,33 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return trimmed.startsWith('Bearer ') ? trimmed.slice(7).trim() : trimmed;
   }
 
+  private parseOptionalTokenQuotaAmount(value: unknown): number | null | undefined {
+    if (value === null) return null;
+    if (typeof value === 'number' && Number.isFinite(value)) return value / TOKEN_QUOTA_UNITS_PER_YUAN;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return undefined;
+      const numeric = Number(trimmed);
+      return Number.isFinite(numeric) ? numeric / TOKEN_QUOTA_UNITS_PER_YUAN : undefined;
+    }
+    return undefined;
+  }
+
+  private parseOptionalTokenBoolean(value: unknown): boolean | null | undefined {
+    if (value === null) return null;
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') {
+      if (value === 1) return true;
+      if (value === 0) return false;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (['true', '1'].includes(normalized)) return true;
+      if (['false', '0'].includes(normalized)) return false;
+    }
+    return undefined;
+  }
+
   private parseGroupKeys(payload: any): string[] {
     if (payload && typeof payload === 'object' && payload?.success === false) {
       return [];
@@ -288,6 +317,22 @@ export class NewApiAdapter extends BasePlatformAdapter {
     }
 
     return [];
+  }
+
+  private parseGroupRatios(payload: any): UserGroupRatioMap {
+    const source = payload?.data ?? payload;
+    const ratios: UserGroupRatioMap = {};
+    if (!source || typeof source !== 'object' || Array.isArray(source)) return ratios;
+    for (const [key, value] of Object.entries(source as Record<string, unknown>)) {
+      const group = key.trim();
+      const ratio = typeof value === 'object' && value !== null
+        ? Number((value as any).ratio ?? (value as any).group_ratio ?? (value as any).groupRatio)
+        : Number(value);
+      if (group && !['success', 'message', 'code', 'data', 'error'].includes(group.toLowerCase()) && Number.isFinite(ratio) && ratio > 0) {
+        ratios[group] = ratio;
+      }
+    }
+    return ratios;
   }
 
   private resolveGroupFetchErrorMessage(payload: any): string {
@@ -324,6 +369,12 @@ export class NewApiAdapter extends BasePlatformAdapter {
         enabled: status === undefined ? true : status === 1,
       };
       if (rawGroup) tokenInfo.tokenGroup = rawGroup;
+      const usedQuota = this.parseOptionalTokenQuotaAmount(item?.used_quota);
+      if (usedQuota !== undefined) tokenInfo.usedQuota = usedQuota;
+      const remainQuota = this.parseOptionalTokenQuotaAmount(item?.remain_quota);
+      if (remainQuota !== undefined) tokenInfo.remainQuota = remainQuota;
+      const unlimitedQuota = this.parseOptionalTokenBoolean(item?.unlimited_quota);
+      if (unlimitedQuota !== undefined) tokenInfo.unlimitedQuota = unlimitedQuota;
       normalized.push(tokenInfo);
     }
     return normalized;
@@ -1353,6 +1404,33 @@ export class NewApiAdapter extends BasePlatformAdapter {
     }
 
     return ['default'];
+  }
+
+  async getUserGroupRatios(baseUrl: string, accessToken: string, platformUserId?: number): Promise<UserGroupRatioMap> {
+    const resolvedUserId = platformUserId || await this.discoverUserId(baseUrl, accessToken);
+    const fallback = { default: 1 };
+
+    try {
+      const res = await this.fetchJson<any>(`${baseUrl}/api/user_group_map`, {
+        headers: this.authHeaders(accessToken, resolvedUserId || undefined),
+      });
+      const parsed = this.parseGroupRatios(res);
+      if (Object.keys(parsed).length > 0) return { default: 1, ...parsed };
+    } catch {}
+
+    const cookieUserId = resolvedUserId || await this.probeUserIdByCookie(baseUrl, accessToken);
+    for (const cookie of this.buildCookieCandidates(accessToken)) {
+      const headers: Record<string, string> = { Cookie: cookie };
+      if (cookieUserId) headers['New-Api-User'] = String(cookieUserId);
+
+      try {
+        const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user_group_map`, { headers });
+        const parsed = this.parseGroupRatios(res);
+        if (Object.keys(parsed).length > 0) return { default: 1, ...parsed };
+      } catch {}
+    }
+
+    return fallback;
   }
 
   async deleteApiToken(

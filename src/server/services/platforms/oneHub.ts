@@ -1,4 +1,5 @@
 import { OneApiAdapter } from './oneApi.js';
+import type { UserGroupRatioMap } from './base.js';
 
 export class OneHubAdapter extends OneApiAdapter {
   readonly platformName: string = 'one-hub';
@@ -50,5 +51,9 @@ export class OneHubAdapter extends OneApiAdapter {
     } catch {}
 
     return super.getUserGroups(baseUrl, accessToken);
+  }
+
+  override async getUserGroupRatios(baseUrl: string, accessToken: string): Promise<UserGroupRatioMap> {
+    return super.getUserGroupRatios(baseUrl, accessToken);
   }
 }

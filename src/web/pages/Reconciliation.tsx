@@ -1,5 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { api, type ReconciliationResultItem, type ReconciliationRunItem } from '../api.js';
+import {
+  api,
+  type DownstreamSiteItem,
+  type ReconciliationComparisonData,
+  type ReconciliationComparisonGroup,
+  type ReconciliationComparisonModelGroup,
+  type ReconciliationComparisonProvider,
+  type ReconciliationResultItem,
+  type ReconciliationRunItem,
+} from '../api.js';
 import { BrandGlyph, getBrand } from '../components/BrandIcon.js';
 import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
@@ -30,6 +39,20 @@ type VendorGroup = {
   mismatchCount: number;
   warningCount: number;
   dominantStatus: string;
+};
+
+const VENDOR_TO_PROVIDER: Record<VendorGroupKey, ReconciliationComparisonProvider> = {
+  openai: 'openai',
+  anthropic: 'anthropic',
+  google: 'google',
+  other: 'other',
+};
+
+const VENDOR_TO_MODEL_GROUP: Record<VendorGroupKey, ReconciliationComparisonModelGroup> = {
+  openai: 'gpt',
+  anthropic: 'claude',
+  google: 'gemini',
+  other: 'other',
 };
 
 function formatIso(value: string | null | undefined): string {
@@ -174,6 +197,137 @@ function ReconciliationFilterChip({
       <span className="filter-chip-label">{label}</span>
       {typeof count === 'number' ? <span className="filter-chip-count">{count}</span> : null}
     </button>
+  );
+}
+
+function resolveComparisonWarningLabel(code: string): string {
+  if (code === 'SNAPSHOT_FALLBACK_USED') return tr('使用渠道快照');
+  if (code === 'EXPLANATORY_COMPARISON_ONLY') return tr('解释性对比');
+  if (code === 'DOWNSTREAM_SITE_FILTER_RECOMMENDED') return tr('建议指定下游来源');
+  return code;
+}
+
+function ReconciliationComparisonTables({
+  group,
+  warnings,
+}: {
+  group: ReconciliationComparisonGroup;
+  warnings: string[];
+}) {
+  return (
+    <div className="reconciliation-comparison-panel">
+      <div className="reconciliation-comparison-panel-header">
+        <div>
+          <div className="reconciliation-comparison-panel-title">{tr('供应商渠道对比表')}</div>
+          <div className="reconciliation-comparison-panel-hint">
+            {group.downstreamSiteName ? `${tr('下游来源')}：${group.downstreamSiteName}` : tr('当前未限定单一下游来源，表格仅用于解释性对比。')}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <span className="badge badge-warning" style={{ fontSize: 11 }}>{tr('渠道快照')}</span>
+          {warnings.map((warning) => (
+            <span key={warning} className="badge badge-muted" style={{ fontSize: 11 }}>{resolveComparisonWarningLabel(warning)}</span>
+          ))}
+        </div>
+      </div>
+
+      <div className="reconciliation-comparison-metrics">
+        <div className="subtle-card" style={{ padding: 12, borderRadius: 14 }}>
+          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 4 }}>{tr('Metapi 通道数')}</div>
+          <div style={{ fontSize: 18, fontWeight: 700 }}>{group.metapiTotals.channelCount}</div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 6 }}>{tr('请求')} {group.metapiTotals.requestCount} · {tr('估算')} {formatMoney(group.metapiTotals.observedCostUsd)}</div>
+        </div>
+        <div className="subtle-card" style={{ padding: 12, borderRadius: 14 }}>
+          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 4 }}>{tr('供应商渠道数')}</div>
+          <div style={{ fontSize: 18, fontWeight: 700 }}>{group.supplierTotals.channelCount}</div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 6 }}>{tr('配额')} {formatTokenCount(group.supplierTotals.consumedQuota)} · {tr('推导')} {formatMoney(group.supplierTotals.consumedCostUsd)}</div>
+        </div>
+      </div>
+
+      <div className="reconciliation-comparison-grid">
+        <div className="reconciliation-comparison-card">
+          <div className="reconciliation-comparison-card-title">{tr('Metapi 本地通道 / 令牌')}</div>
+          <div className="reconciliation-table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>{tr('站点 / 令牌')}</th>
+                  <th>{tr('路由模型')}</th>
+                  <th>{tr('请求数')}</th>
+                  <th>{tr('Tokens')}</th>
+                  <th>{tr('估算 USD')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {group.metapiChannels.map((channel) => (
+                  <tr key={channel.key}>
+                    <td>
+                      <div style={{ display: 'grid', gap: 6 }}>
+                        <div style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{channel.siteName || tr('未绑定站点')}</div>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {channel.channelId ? <span className="badge badge-info" style={{ fontSize: 11 }}>#{channel.channelId}</span> : null}
+                          {channel.tokenName ? <span className="badge badge-success" style={{ fontSize: 11 }}>{channel.tokenName}</span> : <span className="badge badge-muted" style={{ fontSize: 11 }}>{tr('未绑定令牌')}</span>}
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{channel.sourceModel || tr('未命名模型')}</div>
+                        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{channel.routeModelPattern || tr('未记录路由模式')}</div>
+                      </div>
+                    </td>
+                    <td>{channel.requestCount}</td>
+                    <td>{formatTokenCount(channel.observedTokens)}</td>
+                    <td>{formatMoney(channel.observedCostUsd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="reconciliation-comparison-card">
+          <div className="reconciliation-comparison-card-title">{tr('下游 new-api 供应商渠道快照')}</div>
+          <div className="reconciliation-table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>{tr('供应商渠道')}</th>
+                  <th>{tr('分组 / 同步')}</th>
+                  <th>{tr('请求数')}</th>
+                  <th>{tr('配额')}</th>
+                  <th>{tr('推导 USD')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {group.supplierChannels.map((channel) => (
+                  <tr key={channel.key}>
+                    <td>
+                      <div style={{ display: 'grid', gap: 6 }}>
+                        <div style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{channel.remoteName}</div>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          <span className="badge badge-info" style={{ fontSize: 11 }}>#{channel.remoteChannelId}</span>
+                          {channel.remoteGroup ? <span className="badge badge-warning" style={{ fontSize: 11 }}>{channel.remoteGroup}</span> : <span className="badge badge-muted" style={{ fontSize: 11 }}>{tr('未分组')}</span>}
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{channel.notes[0] || tr('来自渠道快照')}</div>
+                        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{channel.syncedAt ? formatIso(channel.syncedAt) : tr('未同步')}</div>
+                      </div>
+                    </td>
+                    <td>{channel.requestCount ?? '-'}</td>
+                    <td>{formatTokenCount(channel.consumedQuota)}</td>
+                    <td>{formatMoney(channel.consumedCostUsd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -387,6 +541,9 @@ export default function Reconciliation() {
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ReconciliationRunItem | null>(null);
   const [deletingRunId, setDeletingRunId] = useState<number | null>(null);
+  const [downstreamSites, setDownstreamSites] = useState<DownstreamSiteItem[]>([]);
+  const [comparisonByVendor, setComparisonByVendor] = useState<Record<string, ReconciliationComparisonData | undefined>>({});
+  const [comparisonLoadingKey, setComparisonLoadingKey] = useState<string | null>(null);
 
   async function loadRunResults(runId: number) {
     const res = await api.getReconciliationRunResults(runId);
@@ -422,6 +579,17 @@ export default function Reconciliation() {
   useEffect(() => {
     void loadRuns();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await api.getDownstreamSites();
+        setDownstreamSites(res.items || []);
+      } catch {
+        setDownstreamSites([]);
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -480,6 +648,28 @@ export default function Reconciliation() {
       toast.error((error as Error)?.message || tr('删除对账任务失败'));
     } finally {
       setDeletingRunId(null);
+    }
+  }
+
+  async function loadComparisonForVendor(group: VendorGroup) {
+    if (!selectedRunId) return;
+    if (comparisonByVendor[group.key]) return;
+    setComparisonLoadingKey(group.key);
+    try {
+      const defaultDownstreamSiteId = downstreamSites[0]?.id ?? null;
+      const res = await api.getReconciliationComparison(selectedRunId, {
+        downstreamSiteId: defaultDownstreamSiteId,
+        provider: VENDOR_TO_PROVIDER[group.key],
+        modelGroup: VENDOR_TO_MODEL_GROUP[group.key],
+      });
+      setComparisonByVendor((current) => ({
+        ...current,
+        [group.key]: res.comparison,
+      }));
+    } catch (error) {
+      toast.error((error as Error)?.message || tr('加载供应商渠道对比失败'));
+    } finally {
+      setComparisonLoadingKey(null);
     }
   }
 
@@ -731,6 +921,7 @@ export default function Reconciliation() {
           ) : vendorGroups.map((group) => {
             const brand = getBrand(group.brandModel);
             const expanded = expandedKeys.includes(group.key);
+            const comparison = comparisonByVendor[group.key];
             return (
               <div key={group.key} className="glass-card" style={{ padding: 18, borderRadius: 20 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start', marginBottom: 14 }}>
@@ -748,7 +939,17 @@ export default function Reconciliation() {
                       <div style={{ color: 'var(--color-text-secondary)', fontSize: 13, lineHeight: 1.6 }}>{group.description}</div>
                     </div>
                   </div>
-                  <button className="btn btn-secondary" onClick={() => setExpandedKeys((current) => expanded ? current.filter((item) => item !== group.key) : [...current, group.key])}>
+                  <button
+                    className="btn btn-ghost"
+                    style={{ border: '1px solid var(--color-border)' }}
+                    onClick={() => {
+                      const nextExpanded = !expanded;
+                      setExpandedKeys((current) => nextExpanded ? [...current, group.key] : current.filter((item) => item !== group.key));
+                      if (nextExpanded) {
+                        void loadComparisonForVendor(group);
+                      }
+                    }}
+                  >
                     {expanded ? tr('收起明细') : tr('展开明细')}
                   </button>
                 </div>
@@ -794,6 +995,18 @@ export default function Reconciliation() {
 
                 {expanded ? (
                   <div style={{ display: 'grid', gap: 12 }}>
+                    {comparisonLoadingKey === group.key ? (
+                      <div className="subtle-card" style={{ padding: 14, borderRadius: 16, color: 'var(--color-text-muted)' }}>
+                        {tr('正在加载供应商渠道对比表...')}
+                      </div>
+                    ) : null}
+                    {comparison?.groups?.map((comparisonGroup) => (
+                      <ReconciliationComparisonTables
+                        key={comparisonGroup.groupKey}
+                        group={comparisonGroup}
+                        warnings={comparison.warnings}
+                      />
+                    ))}
                     {group.results.map((item, index) => {
                       const detailKey = `${group.key}-${item.id}-${index}`;
                       return (

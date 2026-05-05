@@ -1,1 +1,4 @@
--- no schema changes detected for mysql
+ALTER TABLE `account_tokens` ADD COLUMN `used_quota` DOUBLE NULL;
+ALTER TABLE `account_tokens` ADD COLUMN `remain_quota` DOUBLE NULL;
+ALTER TABLE `account_tokens` ADD COLUMN `unlimited_quota` BOOLEAN NULL;
+ALTER TABLE `account_tokens` ADD COLUMN `manual_group_ratio` DOUBLE NULL;

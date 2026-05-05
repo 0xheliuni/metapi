@@ -37,6 +37,8 @@ type AccountWithSiteRow = {
   sites: typeof schema.sites.$inferSelect;
 };
 
+type GroupRatioMap = Record<string, number>;
+
 type SyncExecutionResult = {
   accountId: number;
   accountName: string;
@@ -150,6 +152,17 @@ function parsePositiveInteger(value: unknown): number | undefined {
   if (!trimmed) return undefined;
   const normalized = Number.parseInt(trimmed, 10);
   if (Number.isNaN(normalized) || normalized <= 0) return undefined;
+  return normalized;
+}
+
+function parseOptionalPositiveRatio(value: unknown): number | null | undefined {
+  if (value === null) return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value > 0 ? value : undefined;
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const normalized = Number(trimmed);
+  if (!Number.isFinite(normalized) || normalized <= 0) return undefined;
   return normalized;
 }
 
@@ -470,10 +483,64 @@ function buildCoverageRefreshFailureItem(
   };
 }
 
+function resolveTokenGroupRatio(groupRatios: GroupRatioMap | undefined, groupName: unknown): number | undefined {
+  if (!groupRatios) return undefined;
+  const group = String(groupName || '').trim() || 'default';
+  const ratio = groupRatios[group] ?? groupRatios[group.toLowerCase()] ?? groupRatios.default;
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : undefined;
+}
+
+function resolveEffectiveTokenGroupRatio(token: any, groupRatios: GroupRatioMap | undefined): number | undefined {
+  const manual = Number(token?.manualGroupRatio);
+  if (Number.isFinite(manual) && manual > 0) return manual;
+  return resolveTokenGroupRatio(groupRatios, token?.tokenGroup);
+}
+
+async function fetchAccountGroupRatiosForList(account: typeof schema.accounts.$inferSelect, site: typeof schema.sites.$inferSelect): Promise<GroupRatioMap | undefined> {
+  if (isApiKeyConnection(account) || !account.accessToken?.trim()) return undefined;
+  const adapter = getAdapter(site.platform);
+  if (!adapter) return undefined;
+  try {
+    const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
+    return await withAccountProxyOverride(
+      getProxyUrlFromExtraConfig(account.extraConfig),
+      () => adapter.getUserGroupRatios(site.url, account.accessToken!, platformUserId),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+async function enrichTokensWithGroupRatios(tokens: any[]): Promise<any[]> {
+  const accountMap = new Map<number, { account: typeof schema.accounts.$inferSelect; site: typeof schema.sites.$inferSelect }>();
+  for (const token of tokens) {
+    const accountId = Number(token?.accountId);
+    if (!Number.isFinite(accountId) || accountMap.has(accountId)) continue;
+    const row = await db.select()
+      .from(schema.accounts)
+      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .where(eq(schema.accounts.id, accountId))
+      .get() as AccountWithSiteRow | undefined;
+    if (row) accountMap.set(accountId, { account: row.accounts, site: row.sites });
+  }
+
+  const ratioEntries = await Promise.all(Array.from(accountMap.entries()).map(async ([accountId, owner]) => {
+    const ratios = await fetchAccountGroupRatiosForList(owner.account, owner.site);
+    return [accountId, ratios] as const;
+  }));
+  const ratioMap = new Map(ratioEntries);
+
+  return tokens.map((token) => ({
+    ...token,
+    groupRatio: resolveEffectiveTokenGroupRatio(token, ratioMap.get(Number(token?.accountId))),
+  }));
+}
+
 export async function accountTokensRoutes(app: FastifyInstance) {
   app.get<{ Querystring: { accountId?: string } }>('/api/account-tokens', async (request) => {
     const accountId = request.query.accountId ? Number.parseInt(request.query.accountId, 10) : undefined;
-    return listTokensWithRelations(Number.isFinite(accountId as number) ? accountId : undefined);
+    const tokens = await listTokensWithRelations(Number.isFinite(accountId as number) ? accountId : undefined);
+    return enrichTokensWithGroupRatios(tokens);
   });
 
   app.post<{ Body: unknown }>('/api/account-tokens', async (request, reply) => {
@@ -520,6 +587,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
           name: (body.name || '').trim() || (existing.length === 0 ? 'default' : `token-${existing.length + 1}`),
           token: tokenValue,
           tokenGroup: (body.group || '').trim() || null,
+          manualGroupRatio: parseOptionalPositiveRatio(body.manualGroupRatio) ?? null,
           valueStatus,
           source: body.source || 'manual',
           enabled,
@@ -810,6 +878,14 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       updates.tokenGroup = (body.group || '').trim() || null;
     }
 
+    if (body.manualGroupRatio !== undefined) {
+      const manualGroupRatio = parseOptionalPositiveRatio(body.manualGroupRatio);
+      if (manualGroupRatio === undefined) {
+        return reply.code(400).send({ success: false, message: 'manualGroupRatio 必须是正数或留空' });
+      }
+      updates.manualGroupRatio = manualGroupRatio;
+    }
+
     if (nextValueStatus === ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING) {
       updates.enabled = false;
       updates.isDefault = false;
@@ -942,8 +1018,12 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         getProxyUrlFromExtraConfig(account.extraConfig),
         () => adapter.getUserGroups(site.url, account.accessToken, platformUserId),
       );
+      const groupRatios = await withAccountProxyOverride(
+        getProxyUrlFromExtraConfig(account.extraConfig),
+        () => adapter.getUserGroupRatios(site.url, account.accessToken, platformUserId),
+      ).catch(() => ({ default: 1 }));
       const normalized = Array.from(new Set((groups || []).map((item) => String(item || '').trim()).filter(Boolean)));
-      return { success: true, groups: normalized.length > 0 ? normalized : ['default'] };
+      return { success: true, groups: normalized.length > 0 ? normalized : ['default'], groupRatios };
     } catch (error: any) {
       return reply.code(502).send({
         success: false,

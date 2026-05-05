@@ -8,6 +8,7 @@ const accountTokenCreatePayloadSchema = z.object({
   isDefault: z.boolean().optional(),
   source: z.string().optional(),
   group: z.string().optional(),
+  manualGroupRatio: z.union([z.number(), z.string(), z.null()]).optional(),
   unlimitedQuota: z.boolean().optional(),
   remainQuota: z.union([z.number(), z.string()]).optional(),
   expiredTime: z.union([z.number(), z.string()]).optional(),
@@ -25,6 +26,7 @@ const accountTokenUpdatePayloadSchema = z.object({
   name: z.string().optional(),
   token: z.string().optional(),
   group: z.string().optional(),
+  manualGroupRatio: z.union([z.number(), z.string(), z.null()]).optional(),
   enabled: z.boolean().optional(),
   isDefault: z.boolean().optional(),
   source: z.string().optional(),
@@ -66,6 +68,9 @@ function formatAccountTokenPayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'group') {
     return 'Invalid group. Expected string.';
+  }
+  if (firstPath === 'manualGroupRatio') {
+    return 'Invalid manualGroupRatio. Expected positive number or null.';
   }
   if (firstPath === 'unlimitedQuota') {
     return 'Invalid unlimitedQuota. Expected boolean.';

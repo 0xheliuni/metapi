@@ -83,6 +83,57 @@ const resolveSyncMessage = (result: AccountTokenSyncResult | null | undefined, f
 
 const isMaskedPendingToken = (token: any): boolean => token?.valueStatus === 'masked_pending';
 
+const TOKEN_QUOTA_UNITS_PER_YUAN = 500_000;
+const RAW_TOKEN_QUOTA_THRESHOLD = 100_000;
+
+const parseQuotaAmount = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const normalizeQuotaAmountForDisplay = (value: unknown): number | null => {
+  const amount = parseQuotaAmount(value);
+  if (amount == null) return null;
+  return amount > RAW_TOKEN_QUOTA_THRESHOLD ? amount / TOKEN_QUOTA_UNITS_PER_YUAN : amount;
+};
+
+const formatQuotaAmount = (value: unknown): string | null => {
+  const amount = normalizeQuotaAmountForDisplay(value);
+  return amount == null ? null : `¥${amount.toFixed(2)}`;
+};
+
+const renderTokenQuotaSummary = (token: any): React.ReactNode => {
+  const used = formatQuotaAmount(token?.usedQuota);
+  if (!used) return '-';
+  if (token?.unlimitedQuota === true) return <div>已用 {used}</div>;
+
+  const remainAmount = normalizeQuotaAmountForDisplay(token?.remainQuota);
+  if (remainAmount == null) return <div>已用 {used}</div>;
+  const remain = `¥${remainAmount.toFixed(2)}`;
+  const usedAmount = normalizeQuotaAmountForDisplay(token?.usedQuota) || 0;
+  const total = `¥${(usedAmount + remainAmount).toFixed(2)}`;
+  return (
+    <div className="token-quota-lines">
+      <div>已用 {used}</div>
+      <div>剩余 {remain}</div>
+      <div>总额 {total}</div>
+    </div>
+  );
+};
+
+const normalizeTokenGroupName = (value: unknown): string => String(value || '').trim() || 'default';
+
+const formatGroupRatio = (ratio: unknown): string => {
+  const numeric = typeof ratio === 'number' ? ratio : Number(ratio);
+  return Number.isFinite(numeric) && numeric > 0 ? `${numeric.toFixed(2)}x` : '-';
+};
+
 const isMaskedPendingSyncResult = (result: AccountTokenSyncResult | null | undefined) =>
   String(result?.reason || '').trim().toLowerCase() === 'upstream_masked_tokens'
   && Number(result?.maskedPending || 0) > 0;
@@ -160,6 +211,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     name: '',
     token: '',
     group: 'default',
+    manualGroupRatio: '',
     enabled: true,
     isDefault: false,
   });
@@ -167,6 +219,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
   const [groupLoading, setGroupLoading] = useState(false);
   const [editGroupOptions, setEditGroupOptions] = useState<string[]>(['default']);
   const [editGroupLoading, setEditGroupLoading] = useState(false);
+  const [accountGroupRatios, setAccountGroupRatios] = useState<Record<number, Record<string, number>>>({});
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editingTokenIdRef = useRef<number | null>(null);
@@ -182,6 +235,19 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       const nextTokens = tokenRows || [];
       setTokens(nextTokens);
       setSelectedTokenIds((current) => current.filter((id) => nextTokens.some((token: any) => token.id === id)));
+      const tokenAccountIds: number[] = Array.from(new Set(nextTokens
+        .map((token: any) => Number(token?.accountId))
+        .filter((id: number) => Number.isFinite(id) && id > 0)));
+      const ratioEntries = await Promise.all(tokenAccountIds.map(async (accountId) => {
+        try {
+          const res = await api.getAccountTokenGroups(accountId);
+          const ratios = res?.groupRatios && typeof res.groupRatios === 'object' ? res.groupRatios : {};
+          return [accountId, ratios] as const;
+        } catch {
+          return [accountId, {}] as const;
+        }
+      }));
+      setAccountGroupRatios(Object.fromEntries(ratioEntries));
       const latestAccounts: SyncableAccount[] = Array.isArray(accountSnapshot?.accounts)
         ? accountSnapshot.accounts
         : [];
@@ -206,6 +272,17 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       setLoading(false);
     }
   }, [syncingAccountId, toast]);
+
+  const getTokenGroupRatio = useCallback((token: any) => {
+    const directRatio = Number(token?.groupRatio);
+    if (Number.isFinite(directRatio) && directRatio > 0) return directRatio;
+    const accountId = Number(token?.accountId);
+    if (!Number.isFinite(accountId)) return undefined;
+    const ratios = accountGroupRatios[accountId];
+    if (!ratios) return undefined;
+    const group = normalizeTokenGroupName(token?.tokenGroup);
+    return ratios[group] ?? ratios[group.toLowerCase()] ?? undefined;
+  }, [accountGroupRatios]);
 
   useEffect(() => {
     void load();
@@ -491,6 +568,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       name: token?.name || '',
       token: '',
       group: (token?.tokenGroup || '').trim() || 'default',
+      manualGroupRatio: token?.manualGroupRatio == null ? '' : String(token.manualGroupRatio),
       enabled: isMaskedPendingToken(token) ? true : token?.enabled !== false,
       isDefault: !!token?.isDefault,
     });
@@ -530,6 +608,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       name: '',
       token: '',
       group: 'default',
+      manualGroupRatio: '',
       enabled: true,
       isDefault: false,
     });
@@ -541,12 +620,21 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       toast.error('请粘贴完整明文 token 后再保存');
       return;
     }
+    const manualGroupRatioText = editForm.manualGroupRatio.trim();
+    if (manualGroupRatioText) {
+      const manualGroupRatio = Number(manualGroupRatioText);
+      if (!Number.isFinite(manualGroupRatio) || manualGroupRatio <= 0) {
+        toast.error('分组倍率必须是正数，留空表示使用接口倍率');
+        return;
+      }
+    }
     setSavingEdit(true);
     try {
       await api.updateAccountToken(editingToken.id, {
         name: editForm.name.trim() || editingToken.name,
         token: editForm.token.trim() || undefined,
         group: editForm.group || 'default',
+        manualGroupRatio: manualGroupRatioText || null,
         enabled: editForm.enabled,
         isDefault: editForm.isDefault,
       });
@@ -982,6 +1070,21 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                     disabled={editGroupLoading}
                   />
                 </div>
+                <div>
+                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>手动分组倍率</div>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="留空使用接口倍率"
+                    value={editForm.manualGroupRatio}
+                    onChange={(e) => setEditForm((prev) => ({ ...prev, manualGroupRatio: e.target.value }))}
+                    style={inputStyle}
+                  />
+                  <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
+                    接口倍率始终为 1 或不可用时，可在这里手动覆盖。
+                  </div>
+                </div>
                 <div style={{ gridColumn: '1 / -1' }}>
                   <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>令牌值</div>
                   <textarea
@@ -1225,6 +1328,8 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                   >
                     <MobileField label="账号" value={token.account?.username || `account-${token.accountId}`} />
                     <MobileField label="分组" value={token.tokenGroup || 'default'} />
+                    <MobileField label="分组倍率" value={formatGroupRatio(getTokenGroupRatio(token))} />
+                    <MobileField label="额度" value={renderTokenQuotaSummary(token)} />
                     <MobileField
                       label="状态"
                       value={(
@@ -1321,6 +1426,8 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                 <th>来源站点</th>
                 <th>账号</th>
                 <th>分组</th>
+                <th>分组倍率</th>
+                <th>额度</th>
                 <th>状态</th>
                 <th>默认</th>
                 <th>更新时间</th>
@@ -1374,6 +1481,8 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                     </td>
                     <td>{token.account?.username || `account-${token.accountId}`}</td>
                     <td>{token.tokenGroup || 'default'}</td>
+                    <td>{formatGroupRatio(getTokenGroupRatio(token))}</td>
+                    <td>{renderTokenQuotaSummary(token)}</td>
                     <td>
                       {isPending ? (
                         <span className="badge badge-warning" style={{ fontSize: 11 }}>待补全</span>
