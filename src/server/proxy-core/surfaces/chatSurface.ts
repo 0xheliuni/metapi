@@ -92,6 +92,49 @@ function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+const JSON_SEMANTIC_PASSTHROUGH_BLOCKED_PLATFORMS = new Set([
+  'codex',
+  'gemini-cli',
+  'antigravity',
+]);
+
+function normalizePlatformName(value: unknown): string {
+  return asTrimmedString(value).toLowerCase();
+}
+
+function resolveJsonSemanticPassthroughBody(input: {
+  downstreamFormat: DownstreamFormat;
+  endpoint: 'chat' | 'messages' | 'responses';
+  sitePlatform: unknown;
+  requestBody: unknown;
+  claudeOriginalBody?: Record<string, unknown>;
+}): Record<string, unknown> | undefined {
+  const sitePlatform = normalizePlatformName(input.sitePlatform);
+  if (JSON_SEMANTIC_PASSTHROUGH_BLOCKED_PLATFORMS.has(sitePlatform)) return undefined;
+
+  if (input.downstreamFormat === 'openai' && input.endpoint === 'chat' && isRecord(input.requestBody)) {
+    return input.requestBody;
+  }
+
+  if (input.downstreamFormat === 'claude' && input.endpoint === 'messages' && input.claudeOriginalBody) {
+    return input.claudeOriginalBody;
+  }
+
+  return undefined;
+}
+
+function shouldReturnJsonSemanticPassthroughResponse(input: {
+  request: BuiltEndpointRequest | null;
+  downstreamFormat: DownstreamFormat;
+  upstreamData: unknown;
+}): boolean {
+  if (!input.request?.passthrough?.response) return false;
+  if (!isRecord(input.upstreamData)) return false;
+  if (input.downstreamFormat === 'openai') return input.request.endpoint === 'chat';
+  if (input.downstreamFormat === 'claude') return input.request.endpoint === 'messages';
+  return false;
+}
+
 function finalizeRetryAsUpstreamFailure(status: number, message: string) {
   return {
     action: 'respond' as const,
@@ -328,6 +371,13 @@ export async function handleChatSurfaceRequest(
         options: { forceNormalizeClaudeBody?: boolean } = {},
       ) => {
         const upstreamStream = isStream || (forceResponsesUpstreamStream && endpoint === 'responses');
+        const jsonSemanticPassthroughBody = resolveJsonSemanticPassthroughBody({
+          downstreamFormat,
+          endpoint,
+          sitePlatform: selected.site.platform,
+          requestBody: request.body,
+          claudeOriginalBody,
+        });
         const endpointRequest = buildUpstreamEndpointRequest({
           endpoint,
           modelName,
@@ -341,6 +391,7 @@ export async function handleChatSurfaceRequest(
           downstreamFormat,
           claudeOriginalBody,
           forceNormalizeClaudeBody: options.forceNormalizeClaudeBody,
+          jsonSemanticPassthroughBody,
           downstreamHeaders: request.headers as Record<string, unknown>,
           providerHeaders: buildProviderHeaders(),
           codexSessionCacheKey,
@@ -350,6 +401,7 @@ export async function handleChatSurfaceRequest(
           path: endpointRequest.path,
           headers: endpointRequest.headers,
           body: endpointRequest.body as Record<string, unknown>,
+          passthrough: endpointRequest.passthrough,
           runtime: endpointRequest.runtime,
         };
       };
@@ -387,7 +439,8 @@ export async function handleChatSurfaceRequest(
         return endpointStrategy.tryRecover(ctx);
       };
       const debugAttemptBase = reserveSurfaceProxyDebugAttemptBase(debugTrace, endpointCandidates.length);
-      return executeEndpointFlow({
+      let successfulRequest: BuiltEndpointRequest | null = null;
+      const flowResult = await executeEndpointFlow({
         siteUrl: siteApiBaseUrl,
         disableCrossProtocolFallback: config.disableCrossProtocolFallback,
         firstByteTimeoutMs: Math.max(0, Math.trunc((config.proxyFirstByteTimeoutSec || 0) * 1000)),
@@ -425,6 +478,7 @@ export async function handleChatSurfaceRequest(
           });
         },
         onAttemptSuccess: async (ctx) => {
+          successfulRequest = ctx.request;
           const memoryWrite = recordUpstreamEndpointSuccess({
             ...endpointRuntimeContext,
             endpoint: ctx.request.endpoint,
@@ -470,6 +524,9 @@ export async function handleChatSurfaceRequest(
           });
         },
       });
+      return flowResult.ok
+        ? { ...flowResult, successfulRequest }
+        : flowResult;
     };
     let startTime = Date.now();
     const leaseResult = await acquireSurfaceChannelLease({
@@ -526,6 +583,7 @@ export async function handleChatSurfaceRequest(
 
       const upstream = endpointResult.upstream;
       const successfulUpstreamPath = endpointResult.upstreamPath;
+      const successfulRequest = endpointResult.successfulRequest ?? null;
       const firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
 
       if (isStream) {
@@ -913,8 +971,17 @@ export async function handleChatSurfaceRequest(
         );
         return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
       }
-      const normalizedFinal = downstreamTransformer.transformFinalResponse(upstreamData, modelName, rawText);
-      const downstreamResponse = downstreamTransformer.serializeFinalResponse(normalizedFinal, parsedUsage);
+      const responsePassthroughEnabled = shouldReturnJsonSemanticPassthroughResponse({
+        request: successfulRequest,
+        downstreamFormat,
+        upstreamData,
+      });
+      const downstreamResponse = responsePassthroughEnabled
+        ? upstreamData
+        : downstreamTransformer.serializeFinalResponse(
+          downstreamTransformer.transformFinalResponse(upstreamData, modelName, rawText),
+          parsedUsage,
+        );
 
       await recordSurfaceSuccess({
         selected,
@@ -948,7 +1015,9 @@ export async function handleChatSurfaceRequest(
         selected,
       });
 
-      return reply.send(downstreamResponse);
+      return reply
+        .header('content-type', 'application/json; charset=utf-8')
+        .send(downstreamResponse);
     } catch (err: any) {
       clearSurfaceStickyChannel({
         stickySessionKey,

@@ -237,6 +237,94 @@ describe('chat proxy stream behavior', () => {
     expect(response.json()?.choices?.[0]?.message?.content).toBe('你好，来自 zstd 非流式响应');
   });
 
+  it('passes compatible OpenAI chat JSON fields through and returns vendor response fields unchanged', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'chatcmpl-passthrough',
+      object: 'chat.completion',
+      created: 1_706_000_000,
+      model: 'upstream-gpt',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: 'hello' },
+        finish_reason: 'stop',
+      }],
+      vendor_response_extension: { preserved: true },
+      usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: {
+        authorization: 'Bearer downstream-secret',
+        cookie: 'session=secret',
+        'content-length': '999',
+        'x-metapi-test': 'drop-me',
+      },
+      payload: {
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: 'hi' }],
+        service_tier: 'flex',
+        vendor_request_extension: { preserved: true },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [, init] = fetchMock.mock.calls[0] || [];
+    const forwardedBody = JSON.parse(init?.body as string);
+    expect(forwardedBody).toMatchObject({
+      model: 'upstream-gpt',
+      stream: false,
+      service_tier: 'flex',
+      vendor_request_extension: { preserved: true },
+    });
+    expect(init?.headers?.Authorization).toBe('Bearer sk-demo');
+    expect(init?.headers?.cookie).toBeUndefined();
+    expect(init?.headers?.['content-length']).toBeUndefined();
+    expect(init?.headers?.['x-metapi-test']).toBeUndefined();
+    expect(response.json()?.vendor_response_extension).toEqual({ preserved: true });
+  });
+
+  it('keeps stream requests on the existing SSE transformer path', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'chatcmpl-stream-fallback',
+      object: 'chat.completion',
+      created: 1_706_000_000,
+      model: 'upstream-gpt',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: 'stream fallback' },
+        finish_reason: 'stop',
+      }],
+      vendor_response_extension: { shouldNotPassThrough: true },
+      usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'gpt-4o-mini',
+        stream: true,
+        messages: [{ role: 'user', content: 'hi' }],
+        vendor_request_extension: { preserved: true },
+      },
+    });
+
+    const forwardedBody = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
+    expect(forwardedBody.vendor_request_extension).toEqual({ preserved: true });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.body).toContain('data: ');
+    expect(response.body).not.toContain('vendor_response_extension');
+  });
+
   it('decodes zstd-compressed non-SSE streaming chat responses before SSE conversion', async () => {
     const payload = JSON.stringify({
       id: 'chatcmpl-zstd-stream',
@@ -785,6 +873,64 @@ describe('chat proxy stream behavior', () => {
     expect(body.content?.[0]?.type).toBe('text');
     expect(body.content?.[0]?.text).toContain('hello from claude format');
     expect(body.stop_reason).toBe('end_turn');
+  });
+
+  it('passes compatible Claude messages JSON fields through and returns native response fields unchanged', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: {
+        name: 'claude-site',
+        url: 'https://upstream.example.com',
+        platform: 'claude',
+      },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'claude-opus-4-6',
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'msg_passthrough',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-opus-4-6',
+      content: [{ type: 'text', text: 'ok' }],
+      stop_reason: 'end_turn',
+      vendor_response_extension: { preserved: true },
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/messages',
+      headers: {
+        authorization: 'Bearer downstream-secret',
+        cookie: 'session=secret',
+        'anthropic-beta': 'fine-grained-tool-streaming-2025-05-14',
+      },
+      payload: {
+        model: 'claude-opus-4-6',
+        max_tokens: 256,
+        messages: [{ role: 'user', content: 'hello' }],
+        thinking: { type: 'enabled', budget_tokens: 1024 },
+        vendor_request_extension: 'keep-me',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [, init] = fetchMock.mock.calls[0] || [];
+    const forwardedBody = JSON.parse(init?.body as string);
+    expect(forwardedBody).toMatchObject({
+      model: 'claude-opus-4-6',
+      stream: false,
+      thinking: { type: 'enabled', budget_tokens: 1024 },
+      vendor_request_extension: 'keep-me',
+    });
+    expect(init?.headers?.authorization).toBeUndefined();
+    expect(init?.headers?.cookie).toBeUndefined();
+    expect(response.json()?.vendor_response_extension).toEqual({ preserved: true });
   });
 
   it('converts OpenAI SSE chunks into Claude stream events on /v1/messages', async () => {

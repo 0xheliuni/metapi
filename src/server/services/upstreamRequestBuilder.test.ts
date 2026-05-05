@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { config } from '../config.js';
 import {
   buildClaudeCountTokensUpstreamRequest,
   buildUpstreamEndpointRequest,
@@ -130,6 +131,95 @@ describe('upstreamRequestBuilder', () => {
     expect(request.headers['x-real-ip']).toBeUndefined();
     expect(request.headers.version).toBeUndefined();
     expect(request.headers['x-test-header']).toBeUndefined();
+  });
+
+  it('preserves OpenAI chat semantic passthrough fields while overriding model and stream', () => {
+    const previousRules = config.payloadRules;
+    config.payloadRules = {
+      ...previousRules,
+      filter: [{ models: [{ name: '*' }], params: ['vendor_request_extension'] }],
+    };
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'chat',
+      modelName: 'upstream-gpt',
+      stream: true,
+      tokenValue: 'sk-test',
+      sitePlatform: 'openai',
+      siteUrl: 'https://example.com',
+      openaiBody: {
+        model: 'gpt-5.2',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      downstreamFormat: 'openai',
+      jsonSemanticPassthroughBody: {
+        model: 'downstream-gpt',
+        stream: false,
+        messages: [{ role: 'user', content: 'hello' }],
+        service_tier: 'flex',
+        vendor_extension: { keep: true },
+      },
+      downstreamHeaders: {
+        authorization: 'Bearer downstream-secret',
+        cookie: 'session=secret',
+        connection: 'x-secret-hop',
+        'x-secret-hop': 'drop-me',
+      },
+    });
+    config.payloadRules = previousRules;
+
+    expect(request.body).toMatchObject({
+      model: 'upstream-gpt',
+      stream: true,
+      service_tier: 'flex',
+      vendor_extension: { keep: true },
+    });
+    expect(request.passthrough).toEqual({ request: true, response: false });
+    expect(request.headers.Authorization).toBe('Bearer sk-test');
+    expect(request.headers.cookie).toBeUndefined();
+    expect(request.headers['x-secret-hop']).toBeUndefined();
+  });
+
+  it('preserves Claude messages semantic passthrough fields without continuation hints', () => {
+    const previousRules = config.payloadRules;
+    config.payloadRules = {
+      ...previousRules,
+      filter: [{ models: [{ name: '*' }], params: ['vendor_extension'] }],
+    };
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'messages',
+      modelName: 'claude-opus-4-6',
+      stream: false,
+      tokenValue: 'sk-test',
+      sitePlatform: 'claude',
+      siteUrl: 'https://example.com',
+      openaiBody: {},
+      downstreamFormat: 'claude',
+      claudeOriginalBody: {
+        model: 'claude-opus-4-6',
+        max_tokens: 256,
+        previous_response_id: 'resp_prev_1',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      jsonSemanticPassthroughBody: {
+        model: 'claude-downstream',
+        max_tokens: 256,
+        previous_response_id: 'resp_prev_1',
+        messages: [{ role: 'user', content: 'hello' }],
+        thinking: { type: 'enabled', budget_tokens: 1024 },
+        vendor_extension: 'keep-me',
+      },
+    });
+    config.payloadRules = previousRules;
+
+    expect(request.body).toMatchObject({
+      model: 'claude-opus-4-6',
+      stream: false,
+      max_tokens: 256,
+      thinking: { type: 'enabled', budget_tokens: 1024 },
+      vendor_extension: 'keep-me',
+    });
+    expect(request.body).not.toHaveProperty('previous_response_id');
+    expect(request.passthrough).toEqual({ request: true, response: true });
   });
 
   it('drops responses-style continuation fields before proxying Claude count_tokens upstream', () => {

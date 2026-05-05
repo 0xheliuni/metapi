@@ -415,6 +415,7 @@ export function buildUpstreamEndpointRequest(input: {
   claudeOriginalBody?: Record<string, unknown>;
   forceNormalizeClaudeBody?: boolean;
   responsesOriginalBody?: Record<string, unknown>;
+  jsonSemanticPassthroughBody?: Record<string, unknown>;
   downstreamHeaders?: Record<string, unknown>;
   providerHeaders?: Record<string, string>;
   codexSessionCacheKey?: string | null;
@@ -423,6 +424,10 @@ export function buildUpstreamEndpointRequest(input: {
   path: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;
+  passthrough?: {
+    request: boolean;
+    response: boolean;
+  };
   runtime?: {
     executor: 'default' | 'codex' | 'gemini-cli' | 'antigravity' | 'claude';
     modelName?: string;
@@ -541,6 +546,11 @@ export function buildUpstreamEndpointRequest(input: {
       protocol: sitePlatform,
     }) as T
   );
+  const buildPassthroughBody = (body: Record<string, unknown>): Record<string, unknown> => ({
+    ...body,
+    model: input.modelName,
+    stream: input.stream,
+  });
 
   if (isInternalGeminiUpstream) {
     const instructions = (
@@ -581,17 +591,25 @@ export function buildUpstreamEndpointRequest(input: {
       claudeHeaders['anthropic-version']
       || '2023-06-01'
     );
-    const nativeClaudeBody = (
+    const jsonSemanticPassthroughBody = (
       input.downstreamFormat === 'claude'
-      && input.claudeOriginalBody
+      && input.jsonSemanticPassthroughBody
       && input.forceNormalizeClaudeBody !== true
     )
-      ? {
-        ...stripClaudeMessagesContinuationFields(input.claudeOriginalBody),
-        model: input.modelName,
-        stream: input.stream,
-      }
+      ? buildPassthroughBody(stripClaudeMessagesContinuationFields(input.jsonSemanticPassthroughBody))
       : null;
+    const nativeClaudeBody = jsonSemanticPassthroughBody
+      ?? ((
+        input.downstreamFormat === 'claude'
+        && input.claudeOriginalBody
+        && input.forceNormalizeClaudeBody !== true
+      )
+        ? {
+          ...stripClaudeMessagesContinuationFields(input.claudeOriginalBody),
+          model: input.modelName,
+          stream: input.stream,
+        }
+        : null);
     const normalizedClaudeBody = (
       input.downstreamFormat === 'claude'
       && input.claudeOriginalBody
@@ -603,26 +621,34 @@ export function buildUpstreamEndpointRequest(input: {
         stream: input.stream,
       })
       : null;
+    const semanticPassthroughEnabled = jsonSemanticPassthroughBody !== null;
     const sanitizedBody = nativeClaudeBody
       ?? normalizedClaudeBody
       ?? sanitizeAnthropicMessagesBody(
         convertOpenAiBodyToAnthropicMessagesBody(openaiBody, input.modelName, input.stream),
       );
-    const configuredClaudeBody = applyConfiguredPayloadRules(sanitizedBody);
+    const configuredClaudeBody = semanticPassthroughEnabled
+      ? sanitizedBody
+      : applyConfiguredPayloadRules(sanitizedBody);
 
     if (providerProfile?.id === 'claude') {
-      return providerProfile.prepareRequest({
-        endpoint: 'messages',
-        modelName: input.modelName,
-        stream: input.stream,
-        tokenValue: input.tokenValue,
-        oauthProvider: input.oauthProvider,
-        oauthProjectId: input.oauthProjectId,
-        sitePlatform,
-        baseHeaders: commonHeaders,
-        claudeHeaders,
-        body: configuredClaudeBody,
-      });
+      return {
+        ...providerProfile.prepareRequest({
+          endpoint: 'messages',
+          modelName: input.modelName,
+          stream: input.stream,
+          tokenValue: input.tokenValue,
+          oauthProvider: input.oauthProvider,
+          oauthProjectId: input.oauthProjectId,
+          sitePlatform,
+          baseHeaders: commonHeaders,
+          claudeHeaders,
+          body: configuredClaudeBody,
+        }),
+        passthrough: semanticPassthroughEnabled
+          ? { request: true, response: !input.stream }
+          : undefined,
+      };
     }
 
     const headers = buildClaudeRuntimeHeaders({
@@ -638,6 +664,9 @@ export function buildUpstreamEndpointRequest(input: {
       path: resolveEndpointPath('messages'),
       headers,
       body: configuredClaudeBody,
+      passthrough: semanticPassthroughEnabled
+        ? { request: true, response: !input.stream }
+        : undefined,
       runtime,
     };
   }
@@ -717,20 +746,28 @@ export function buildUpstreamEndpointRequest(input: {
   }
 
   const headers = ensureStreamAcceptHeader(commonHeaders, input.stream);
-  const chatBody = {
+  const jsonSemanticPassthroughBody = input.downstreamFormat === 'openai' && input.jsonSemanticPassthroughBody
+    ? buildPassthroughBody(input.jsonSemanticPassthroughBody)
+    : null;
+  const chatBody = jsonSemanticPassthroughBody ?? {
     ...openaiBody,
     model: input.modelName,
     stream: input.stream,
   };
-  const configuredChatBody = applyConfiguredPayloadRules(
-    input.downstreamFormat === 'responses'
-      ? sanitizeResponsesFallbackChatBody(chatBody)
-      : chatBody,
-  );
+  const configuredChatBody = jsonSemanticPassthroughBody
+    ? chatBody
+    : applyConfiguredPayloadRules(
+      input.downstreamFormat === 'responses'
+        ? sanitizeResponsesFallbackChatBody(chatBody)
+        : chatBody,
+    );
   return {
     path: resolveEndpointPath('chat'),
     headers,
     body: configuredChatBody,
+    passthrough: jsonSemanticPassthroughBody
+      ? { request: true, response: !input.stream }
+      : undefined,
     runtime,
   };
 }
@@ -771,7 +808,7 @@ export function buildClaudeCountTokensUpstreamRequest(input: {
       .filter(Boolean),
     ...betas,
   ];
-  const effectiveClaudeHeaders = {
+  const effectiveClaudeHeaders: Record<string, string> = {
     ...claudeHeaders,
     ...(mergedBetas.length > 0
       ? { 'anthropic-beta': Array.from(new Set(mergedBetas)).join(',') }

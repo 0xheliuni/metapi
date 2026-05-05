@@ -13,6 +13,10 @@ export type BuiltEndpointRequest = {
   path: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;
+  passthrough?: {
+    request: boolean;
+    response: boolean;
+  };
   runtime?: {
     executor: 'default' | 'codex' | 'gemini-cli' | 'antigravity' | 'claude';
     modelName?: string;
